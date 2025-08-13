@@ -66,21 +66,31 @@ def generate_table_description(table_name: str, fields: List[TableField]) -> str
             for field in fields
         ])
 
-        prompt = f"""Given a database table named '{table_name}' with the following fields:
+        prompt = f"""You are a database expert analyzing a banking/financial system table. 
+
+Table: {table_name}
+Fields:
 
 {field_info}
 
-Generate a clear, concise description of this table's purpose and the type of data it stores. 
-Focus on business context and relationships. Keep the description under 200 characters."""
+Based on the table name and field structure, provide a detailed business description of what this table stores and its purpose in the system.
+
+Consider:
+- What business process or entity does this represent?
+- What kind of transactions or data would be stored here?
+- How might this table be used in business operations?
+- What relationships might it have with other system components?
+
+Provide a clear, informative description (2-3 sentences) that would help a business user understand the table's purpose."""
 
         response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a database expert helping to document table structures."},
+                {"role": "system", "content": "You are a senior database analyst with expertise in banking and financial systems. You understand T24 core banking, statement processing, account management, and financial data structures. Provide clear, business-focused descriptions that help users understand the practical purpose of database tables and fields."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=100,
-            temperature=0.7
+            max_tokens=200,
+            temperature=0.3
         )
 
         description = response.choices[0].message.content.strip()
@@ -89,7 +99,7 @@ Focus on business context and relationships. Keep the description under 200 char
 
     except Exception as e:
         logger.error(f"Error generating table description: {str(e)}")
-        return f"Table containing {table_name} related data"
+        return f"Database table for {table_name.replace('_', ' ').title()} data storage and management"
 
 def generate_field_descriptions(table_name: str, fields: List[TableField]) -> List[TableField]:
     """Generate descriptions for fields using OpenAI."""
@@ -104,35 +114,58 @@ def generate_field_descriptions(table_name: str, fields: List[TableField]) -> Li
             for field in fields
         ])
 
-        prompt = f"""For the table '{table_name}' with these fields:
+        prompt = f"""You are analyzing a banking/financial system table. Provide business-focused descriptions for each field.
+
+Table: {table_name}
+Fields:
 
 {fields_context}
 
-Generate a clear, concise description (max 100 characters) for each field, explaining its purpose and business context."""
+For each field, provide a clear business description that explains:
+- What data this field contains
+- How it's used in business processes
+- Its relationship to banking/financial operations
+- Any business rules or constraints
+
+Format your response as:
+fieldName: description
+
+Keep descriptions informative but concise (1-2 sentences each)."""
 
         response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a database expert helping to document field meanings."},
+                {"role": "system", "content": "You are a senior database analyst specializing in banking and financial systems. You understand T24 core banking, account structures, transaction processing, and financial data relationships. Provide practical, business-focused field descriptions that help users understand how each field is used in real banking operations."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=1000,
-            temperature=0.7
+            max_tokens=1500,
+            temperature=0.3
         )
 
         # Parse the response and update field descriptions
-        descriptions = response.choices[0].message.content.strip().split("\n")
-        for field, description in zip(fields, descriptions):
-            # Clean up the description
-            clean_desc = re.sub(r'^[^:]*:', '', description).strip()
-            field.description = clean_desc
+        response_text = response.choices[0].message.content.strip()
+        description_lines = [line.strip() for line in response_text.split('\n') if line.strip() and ':' in line]
+        
+        # Create a mapping of field names to descriptions
+        field_descriptions = {}
+        for line in description_lines:
+            if ':' in line:
+                field_name, description = line.split(':', 1)
+                field_descriptions[field_name.strip()] = description.strip()
+        
+        # Update field descriptions
+        for field in fields:
+            if field.fieldName in field_descriptions:
+                field.description = field_descriptions[field.fieldName]
+            else:
+                # Fallback description if OpenAI didn't provide one
+                field.description = f"Data field for {field.fieldName.replace('_', ' ').lower()} information"
 
         logger.info(f"Generated descriptions for {len(fields)} fields in table {table_name}")
         return fields
 
     except Exception as e:
         logger.error(f"Error generating field descriptions: {str(e)}")
-        return fields
 
 @router.post("/connect")
 async def connect_database(config: DatabaseConfig):

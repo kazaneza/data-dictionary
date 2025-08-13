@@ -69,6 +69,45 @@ export default function DatabaseImport() {
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [tableFields, setTableFields] = useState<TableField[]>([]);
 
+  // Load saved state on component mount
+  useEffect(() => {
+    const savedState = localStorage.getItem(IMPORT_STATE_KEY);
+    if (savedState) {
+      try {
+        const state: ImportState = JSON.parse(savedState);
+        // Only restore if saved within last 24 hours
+        if (Date.now() - state.timestamp < 24 * 60 * 60 * 1000) {
+          setConfig(state.config);
+          setPreviewData(state.previewData);
+          setSelectedTables(state.selectedTables);
+          setStep(state.step);
+          if (state.previewData) {
+            toast.success('Restored previous import session');
+          }
+        } else {
+          localStorage.removeItem(IMPORT_STATE_KEY);
+        }
+      } catch (error) {
+        console.error('Failed to restore import state:', error);
+        localStorage.removeItem(IMPORT_STATE_KEY);
+      }
+    }
+  }, []);
+
+  // Save state whenever important data changes
+  useEffect(() => {
+    if (config.source_id || previewData) {
+      const state: ImportState = {
+        config,
+        previewData,
+        selectedTables,
+        step,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(IMPORT_STATE_KEY, JSON.stringify(state));
+    }
+  }, [config, previewData, selectedTables, step]);
+
   useEffect(() => {
     const fetchSources = async () => {
       try {
@@ -274,7 +313,32 @@ export default function DatabaseImport() {
           </Link>
           <h1 className="text-2xl font-bold">Database Import</h1>
         </div>
+        {(previewData || config.source_id) && (
+          <button
+            onClick={handleClearState}
+            className="text-red-600 hover:text-red-800 text-sm px-3 py-1 border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
+          >
+            Clear Session
+          </button>
+        )}
       </div>
+
+      {/* Session Status */}
+      {previewData && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-medium text-blue-900">Active Import Session</h3>
+              <p className="text-sm text-blue-700">
+                Connected to {config.database} ({config.type}) - {previewData.tables.length} tables available
+              </p>
+            </div>
+            <div className="text-sm text-blue-600">
+              {selectedTables.length} selected for import
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-12 gap-6">
         {/* Connection Panel */}
