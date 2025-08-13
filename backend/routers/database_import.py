@@ -257,7 +257,7 @@ def generate_field_descriptions_with_context(table_name: str, fields: List[Table
             for field in fields
         ])
 
-        prompt = f"""You are analyzing a database table from a business system. Provide business-focused descriptions for each field.
+        prompt = f"""You are a senior database analyst with deep expertise in business systems. Analyze this table and provide detailed, business-focused descriptions for each field.
 
 System Context: {source_context}
 
@@ -266,25 +266,33 @@ Fields:
 
 {fields_context}
 
-For each field, provide a clear business description that explains:
-- What data this field contains in the context of this system type
-- How it's used in business processes
-- Its relationship to business operations
-- Any business rules or constraints
+IMPORTANT: For each field, provide a detailed business description that explains:
+1. What specific data this field stores (be very specific about the content)
+2. How this field is used in real business operations
+3. What business rules or constraints apply
+4. Any relationships to other data or processes
+5. Examples of typical values when relevant
+
+Focus on practical business understanding, not technical database concepts.
+
+Examples of good descriptions:
+- ACCOUNT_NUMBER: "Unique identifier for customer bank accounts, typically 10-12 digits, used across all banking transactions and customer communications"
+- TRANSACTION_AMOUNT: "Monetary value of the financial transaction in the account's base currency, stored as decimal with 2 decimal places for cents/pence"
+- CUSTOMER_STATUS: "Current status of the customer relationship (Active, Suspended, Closed), determines what services and transactions are available"
 
 Format your response as:
 fieldName: description
 
-Keep descriptions informative but concise (1-2 sentences each)."""
+Make each description informative and specific (2-3 sentences each)."""
 
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a senior database analyst with expertise in various business systems. Use the provided system context to understand the business domain and provide practical, business-focused field descriptions that help users understand how each field is used in real business operations."},
+                {"role": "system", "content": "You are a senior database analyst and business systems expert with 15+ years of experience. You understand how database fields are used in real business operations across banking, ERP, CRM, and other enterprise systems. Provide detailed, practical descriptions that help business users understand exactly what each field contains and how it's used. Avoid generic technical descriptions - focus on business value and practical usage."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=1500,
-            temperature=0.3
+            max_tokens=2500,
+            temperature=0.2
         )
 
         # Parse the response and update field descriptions
@@ -304,7 +312,8 @@ Keep descriptions informative but concise (1-2 sentences each)."""
                 field.description = field_descriptions[field.fieldName]
             else:
                 # Fallback description if OpenAI didn't provide one
-                field.description = f"Data field for {field.fieldName.replace('_', ' ').lower()} information"
+                # Generate a better fallback based on field name analysis
+                field.description = generate_fallback_description(field.fieldName, field.dataType, table_name)
 
         logger.info(f"Generated context-aware descriptions for {len(fields)} fields in table {table_name}")
         return fields
@@ -312,6 +321,35 @@ Keep descriptions informative but concise (1-2 sentences each)."""
     except Exception as e:
         logger.error(f"Error generating field descriptions with context: {str(e)}")
         return fields
+
+def generate_fallback_description(field_name: str, data_type: str, table_name: str) -> str:
+    """Generate a better fallback description when OpenAI fails."""
+    field_lower = field_name.lower()
+    
+    # Common field patterns with better descriptions
+    if 'id' in field_lower and ('customer' in field_lower or 'client' in field_lower):
+        return f"Unique identifier linking to customer records, used for customer relationship tracking and data integrity"
+    elif 'id' in field_lower and field_lower.endswith('_id'):
+        entity = field_name[:-3].replace('_', ' ').title()
+        return f"Foreign key reference to {entity} records, establishing relational data integrity"
+    elif 'amount' in field_lower or 'balance' in field_lower:
+        return f"Monetary value stored as {data_type}, representing financial amounts in the system's base currency"
+    elif 'date' in field_lower or 'time' in field_lower:
+        return f"Timestamp field ({data_type}) recording when specific business events occurred for audit and reporting purposes"
+    elif 'status' in field_lower or 'state' in field_lower:
+        return f"Status indicator controlling business logic and workflow states for {table_name.replace('_', ' ').lower()} records"
+    elif 'code' in field_lower:
+        return f"Standardized code value ({data_type}) used for categorization and business rule processing"
+    elif 'name' in field_lower or 'description' in field_lower:
+        return f"Descriptive text field ({data_type}) providing human-readable information for business users"
+    elif 'account' in field_lower:
+        return f"Account reference ({data_type}) linking to financial account structures and transaction processing"
+    elif 'number' in field_lower:
+        return f"Numeric identifier or sequence ({data_type}) used for unique identification and business referencing"
+    else:
+        # Generic but better fallback
+        clean_name = field_name.replace('_', ' ').title()
+        return f"{clean_name} data field ({data_type}) storing business information for {table_name.replace('_', ' ').lower()} operations"
 
 @router.post("/connect")
 async def connect_database(config: DatabaseConfig):
