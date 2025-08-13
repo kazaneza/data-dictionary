@@ -1,6 +1,23 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Search, CheckSquare, Square, Database, Table2, Loader2 } from 'lucide-react';
 
+// Custom hook for debounced search
+function useDebounce(value: string, delay: number) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+}
+
 interface TableSelectionProps {
   tables: string[];
   selectedTables: string[];
@@ -16,12 +33,18 @@ export default function TableSelection({
 }: TableSelectionProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
+  // Debounce search term to avoid excessive filtering
+  const debouncedSearchTerm = useDebounce(searchTerm, 300);
+
   const filteredTables = useMemo(() => {
-    if (!searchTerm) return tables;
+    if (!debouncedSearchTerm) return tables;
+    
+    // Use more efficient filtering for large datasets
+    const searchLower = debouncedSearchTerm.toLowerCase();
     return tables.filter(table => 
-      table.toLowerCase().includes(searchTerm.toLowerCase())
+      table.toLowerCase().includes(searchLower)
     );
-  }, [tables, searchTerm]);
+  }, [tables, debouncedSearchTerm]);
 
   // Memoize selection state calculations
   const selectionState = useMemo(() => {
