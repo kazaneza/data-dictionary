@@ -128,6 +128,56 @@ Provide a clear, informative description (2-3 sentences) that would help a busin
         logger.error(f"Error generating table description: {str(e)}")
         return f"Database table for {table_name.replace('_', ' ').title()} data storage and management"
 
+def generate_table_description_with_context(table_name: str, fields: List[TableField], source_context: str) -> str:
+    """Generate a description for a table using OpenAI with source system context."""
+    try:
+        # Create a prompt that includes table name and field information
+        field_info = "\n".join([
+            f"- {field.fieldName} ({field.dataType}): " +
+            f"{'Primary Key, ' if field.isPrimaryKey == 'Yes' else ''}" +
+            f"{'Foreign Key, ' if field.isForeignKey == 'Yes' else ''}" +
+            f"{'Nullable, ' if field.isNullable == 'Yes' else 'Required, '}" +
+            f"Default: {field.defaultValue if field.defaultValue else 'None'}"
+            for field in fields
+        ])
+
+        prompt = f"""You are analyzing a database table from a business system.
+
+System Context: {source_context}
+
+Table: {table_name}
+Fields:
+
+{field_info}
+
+Based on the system context, table name, and field structure, provide a detailed business description of what this table stores and its purpose in the system.
+
+Consider:
+- What business process or entity does this represent in this specific system type?
+- What kind of data would be stored here?
+- How might this table be used in business operations?
+- What relationships might it have with other system components?
+
+Provide a clear, informative description (2-3 sentences) that would help a business user understand the table's purpose."""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a senior database analyst with expertise in various business systems. Use the provided system context to understand the business domain and provide clear, business-focused descriptions that help users understand the practical purpose of database tables and fields."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=200,
+            temperature=0.3
+        )
+
+        description = response.choices[0].message.content.strip()
+        logger.info(f"Generated context-aware description for table {table_name}: {description}")
+        return description
+
+    except Exception as e:
+        logger.error(f"Error generating table description with context: {str(e)}")
+        return f"Database table for {table_name.replace('_', ' ').title()} data storage and management"
+
 def generate_field_descriptions(table_name: str, fields: List[TableField]) -> List[TableField]:
     """Generate descriptions for fields using OpenAI."""
     try:
@@ -193,6 +243,75 @@ Keep descriptions informative but concise (1-2 sentences each)."""
 
     except Exception as e:
         logger.error(f"Error generating field descriptions: {str(e)}")
+
+def generate_field_descriptions_with_context(table_name: str, fields: List[TableField], source_context: str) -> List[TableField]:
+    """Generate descriptions for fields using OpenAI with source system context."""
+    try:
+        # Create a prompt that includes context about all fields
+        fields_context = "\n".join([
+            f"- {field.fieldName} ({field.dataType}): " +
+            f"{'Primary Key, ' if field.isPrimaryKey == 'Yes' else ''}" +
+            f"{'Foreign Key, ' if field.isForeignKey == 'Yes' else ''}" +
+            f"{'Nullable, ' if field.isNullable == 'Yes' else 'Required, '}" +
+            f"Default: {field.defaultValue if field.defaultValue else 'None'}"
+            for field in fields
+        ])
+
+        prompt = f"""You are analyzing a database table from a business system. Provide business-focused descriptions for each field.
+
+System Context: {source_context}
+
+Table: {table_name}
+Fields:
+
+{fields_context}
+
+For each field, provide a clear business description that explains:
+- What data this field contains in the context of this system type
+- How it's used in business processes
+- Its relationship to business operations
+- Any business rules or constraints
+
+Format your response as:
+fieldName: description
+
+Keep descriptions informative but concise (1-2 sentences each)."""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a senior database analyst with expertise in various business systems. Use the provided system context to understand the business domain and provide practical, business-focused field descriptions that help users understand how each field is used in real business operations."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1500,
+            temperature=0.3
+        )
+
+        # Parse the response and update field descriptions
+        response_text = response.choices[0].message.content.strip()
+        description_lines = [line.strip() for line in response_text.split('\n') if line.strip() and ':' in line]
+        
+        # Create a mapping of field names to descriptions
+        field_descriptions = {}
+        for line in description_lines:
+            if ':' in line:
+                field_name, description = line.split(':', 1)
+                field_descriptions[field_name.strip()] = description.strip()
+        
+        # Update field descriptions
+        for field in fields:
+            if field.fieldName in field_descriptions:
+                field.description = field_descriptions[field.fieldName]
+            else:
+                # Fallback description if OpenAI didn't provide one
+                field.description = f"Data field for {field.fieldName.replace('_', ' ').lower()} information"
+
+        logger.info(f"Generated context-aware descriptions for {len(fields)} fields in table {table_name}")
+        return fields
+
+    except Exception as e:
+        logger.error(f"Error generating field descriptions with context: {str(e)}")
+        return fields
 
 @router.post("/connect")
 async def connect_database(config: DatabaseConfig):
