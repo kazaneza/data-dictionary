@@ -53,6 +53,33 @@ class TableField(BaseModel):
 class SchemaRequest(DatabaseConfig):
     tableName: str
 
+def get_source_system_context(source_name: str) -> str:
+    """Get context about the source system to help OpenAI provide better descriptions."""
+    source_lower = source_name.lower()
+    
+    # Banking systems
+    if any(keyword in source_lower for keyword in ['t24', 'core banking', 'banking', 'temenos']):
+        return "This is a core banking system (T24/Temenos). Focus on banking operations like accounts, transactions, customers, loans, deposits, and financial processing."
+    
+    # ERP systems
+    elif any(keyword in source_lower for keyword in ['sap', 'oracle', 'erp', 'enterprise']):
+        return "This is an Enterprise Resource Planning (ERP) system. Focus on business processes like finance, procurement, inventory, human resources, and operations management."
+    
+    # CRM systems
+    elif any(keyword in source_lower for keyword in ['crm', 'customer', 'salesforce', 'dynamics']):
+        return "This is a Customer Relationship Management (CRM) system. Focus on customer data, sales processes, marketing campaigns, and customer interactions."
+    
+    # HR systems
+    elif any(keyword in source_lower for keyword in ['hr', 'human resource', 'payroll', 'employee']):
+        return "This is a Human Resources system. Focus on employee data, payroll, benefits, performance management, and workforce analytics."
+    
+    # Financial systems
+    elif any(keyword in source_lower for keyword in ['finance', 'accounting', 'ledger', 'financial']):
+        return "This is a financial/accounting system. Focus on financial transactions, accounting entries, budgets, and financial reporting."
+    
+    # Default
+    else:
+        return f"This is a business system called '{source_name}'. Analyze the table and field names to understand the business domain and provide relevant descriptions."
 def generate_table_description(table_name: str, fields: List[TableField]) -> str:
     """Generate a description for a table using OpenAI."""
     try:
@@ -86,7 +113,7 @@ Provide a clear, informative description (2-3 sentences) that would help a busin
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a senior database analyst with expertise in banking and financial systems. You understand T24 core banking, statement processing, account management, and financial data structures. Provide clear, business-focused descriptions that help users understand the practical purpose of database tables and fields."},
+                {"role": "system", "content": "You are a senior database analyst with expertise in various business systems including banking, financial services, ERP, CRM, and other enterprise applications. Analyze the table and field names to understand the business domain and provide clear, business-focused descriptions that help users understand the practical purpose of database tables and fields."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=200,
@@ -201,6 +228,18 @@ async def connect_database(config: DatabaseConfig):
 async def get_schema(request: SchemaRequest):
     try:
         logger.info(f"Getting schema for table {request.tableName}")
+        
+        # Get source system information for context
+        from database import SessionLocal
+        from models import SourceSystem
+        
+        db = SessionLocal()
+        try:
+            source_system = db.query(SourceSystem).filter(SourceSystem.id == request.source_id).first()
+            source_context = get_source_system_context(source_system.name if source_system else "Unknown System")
+        finally:
+            db.close()
+        
         # Get the appropriate connection handler
         connection_class = get_connection_handler(request.type)
         handler = connection_class(request.dict())
@@ -222,10 +261,10 @@ async def get_schema(request: SchemaRequest):
             ) for field in fields]
             
             # Generate table description
-            table_description = generate_table_description(request.tableName, table_fields)
+            table_description = generate_table_description_with_context(request.tableName, table_fields, source_context)
             
             # Generate field descriptions
-            table_fields = generate_field_descriptions(request.tableName, table_fields)
+            table_fields = generate_field_descriptions_with_context(request.tableName, table_fields, source_context)
             
             logger.info(f"Successfully processed schema for table {request.tableName}")
             return {
