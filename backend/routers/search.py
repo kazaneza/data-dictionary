@@ -101,7 +101,13 @@ Return a JSON array with objects containing:
 - "score": relevance score from 0.0 to 1.0
 - "reason": brief explanation of relevance
 
-Only include items with score >= 0.3. Sort by score descending."""
+Only include items with score >= 0.3. Sort by score descending.
+
+IMPORTANT: Return ONLY the JSON array, no other text or formatting. Example:
+[
+  {"index": 6, "score": 1.0, "reason": "Exact match for RECID field"},
+  {"index": 2, "score": 0.8, "reason": "Related record status field"}
+]"""
 
         response = client.chat.completions.create(
             model="gpt-4",
@@ -116,7 +122,29 @@ Only include items with score >= 0.3. Sort by score descending."""
         # Parse the response
         import json
         try:
-            scores = json.loads(response.choices[0].message.content)
+            response_content = response.choices[0].message.content.strip()
+            logger.debug(f"OpenAI response content: {response_content}")
+            
+            # Try to extract JSON from the response if it's wrapped in markdown or other text
+            if "```json" in response_content:
+                # Extract JSON from markdown code block
+                start = response_content.find("```json") + 7
+                end = response_content.find("```", start)
+                json_str = response_content[start:end].strip()
+            elif response_content.startswith('[') or response_content.startswith('{'):
+                # Response is already JSON
+                json_str = response_content
+            else:
+                # Try to find JSON array in the response
+                import re
+                json_match = re.search(r'\[.*\]', response_content, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    logger.error(f"Could not extract JSON from OpenAI response: {response_content}")
+                    return []
+            
+            scores = json.loads(json_str)
             
             # Apply scores to items
             scored_items = []
@@ -131,14 +159,57 @@ Only include items with score >= 0.3. Sort by score descending."""
             return sorted(scored_items, key=lambda x: x["score"], reverse=True)
             
         except json.JSONDecodeError:
-            logger.error("Failed to parse OpenAI response as JSON")
+            logger.error(f"Failed to parse OpenAI response as JSON. Content: {response.choices[0].message.content}")
+            # Fallback to simple keyword matching
+            return fallback_keyword_search(query, items, item_type)
+        except Exception as e:
+            logger.error(f"Error processing OpenAI response: {str(e)}")
             return []
             
     except Exception as e:
         logger.error(f"Error in semantic search: {str(e)}")
-        return []
 
 @router.post("/search", response_model=SearchResponse)
+def fallback_keyword_search(query: str, items: List[dict], item_type: str) -> List[dict]:
+    """Fallback keyword-based search when OpenAI fails"""
+    try:
+        query_lower = query.lower()
+        query_words = query_lower.split()
+        
+        scored_items = []
+        for item in items:
+            score = 0.0
+            name_lower = item['name'].lower()
+            desc_lower = (item.get('description') or '').lower()
+            
+            # Exact name match gets highest score
+            if query_lower == name_lower:
+                score = 1.0
+            # Name contains query gets high score
+            elif query_lower in name_lower:
+                score = 0.9
+            # Query words in name
+            elif any(word in name_lower for word in query_words):
+                score = 0.8
+            # Query in description
+            elif query_lower in desc_lower:
+                score = 0.7
+            # Query words in description
+            elif any(word in desc_lower for word in query_words):
+                score = 0.6
+            
+            if score >= 0.3:
+                item_copy = item.copy()
+                item_copy["score"] = score
+                item_copy["reason"] = f"Keyword match in {item_type} name/description"
+                scored_items.append(item_copy)
+        
+        return sorted(scored_items, key=lambda x: x["score"], reverse=True)
+        
+    except Exception as e:
+        logger.error(f"Error in fallback search: {str(e)}")
+        return []
+
 async def search(
     request: SearchRequest,
     db: Session = Depends(get_db)
