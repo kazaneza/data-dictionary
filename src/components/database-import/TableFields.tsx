@@ -1,105 +1,91 @@
 import React from 'react';
-import { Save } from 'lucide-react';
-import { SourceSystem } from '../../lib/api';
-import TableFields from './TableFields';
+import { Loader2 } from 'lucide-react';
 
-interface SchemaPreviewProps {
-  previewData: {
-    tables: string[];
-    fields: any[];
-  } | null;
-  config: {
-    source_id: string;
-    database: string;
-    type: string;
-    platform: string;
-    location: string;
-    version: string;
-  };
-  sources: SourceSystem[];
-  selectedTable: string | null;
-  tableFields: any[];
-  loading: boolean;
+interface TableFieldsProps {
+  tableName: string;
+  fields: any[];
   loadingDescriptions: boolean;
-  onTableSelect: (table: string) => void;
-  onImport: () => void;
 }
 
-export default function SchemaPreview({
-  previewData,
-  config,
-  sources,
-  selectedTable,
-  tableFields,
-  loading,
+export default function TableFields({
+  tableName,
+  fields,
   loadingDescriptions,
-  onTableSelect,
-  onImport
-}: SchemaPreviewProps) {
-  if (!previewData) {
-    return (
-      <div className="text-center py-12 text-gray-500">
-        Connect to a database to preview its schema
-      </div>
-    );
-  }
-
+}: TableFieldsProps) {
   return (
-    <div className="space-y-6">
-      <div className="mb-6 p-4 bg-blue-50 rounded-lg">
-        <h3 className="font-medium mb-2">Database Information</h3>
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <p className="text-gray-600">
-              Source: {sources.find((s) => s.id === config.source_id)?.name}
-            </p>
-            <p className="text-gray-600">Database: {config.database}</p>
-            <p className="text-gray-600">Type: {config.type}</p>
-          </div>
-          <div>
-            <p className="text-gray-600">Platform: {config.platform}</p>
-            <p className="text-gray-600">Location: {config.location}</p>
-            <p className="text-gray-600">Version: {config.version}</p>
-          </div>
-        </div>
+    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+        <h4 className="font-medium text-gray-900 flex items-center">
+          Table: {tableName}
+          {loadingDescriptions && (
+            <Loader2 className="h-4 w-4 ml-2 animate-spin text-[#003B7E]" />
+          )}
+        </h4>
+        <p className="text-sm text-gray-500 mt-1">
+          {fields.length} field{fields.length !== 1 ? 's' : ''}
+        </p>
       </div>
-
-      <div>
-        <h3 className="font-medium mb-4">
-          Available Tables ({previewData.tables.length})
-        </h3>
-        <div className="grid grid-cols-3 gap-4">
-          {previewData.tables.map((table) => (
-            <div
-              key={table}
-              onClick={() => onTableSelect(table)}
-              className={`p-3 bg-gray-50 rounded-lg cursor-pointer transition-colors ${
-                selectedTable === table ? 'ring-2 ring-[#003B7E] bg-blue-50' : 'hover:bg-gray-100'
-              }`}
-            >
-              <p className="font-medium">{table}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {selectedTable && tableFields.length > 0 && (
-        <TableFields
-          tableName={selectedTable}
-          fields={tableFields}
-          loadingDescriptions={loadingDescriptions}
-        />
-      )}
-
-      <div className="flex justify-end">
-        <button
-          onClick={onImport}
-          disabled={loading}
-          className="bg-[#003B7E] text-white px-4 py-2 rounded-lg hover:bg-[#002c5f] transition-colors disabled:opacity-50 flex items-center"
-        >
-          <Save className="h-4 w-4 mr-2" />
-          Import to Dictionary
-        </button>
+      
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Field Name
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Data Type
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Nullable
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Keys
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Default
+              </th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {fields.map((field, index) => (
+              <tr key={index} className="hover:bg-gray-50">
+                <td className="px-4 py-2 text-sm font-medium text-gray-900">
+                  {field.fieldName}
+                </td>
+                <td className="px-4 py-2 text-sm text-gray-500">
+                  {field.dataType}
+                </td>
+                <td className="px-4 py-2 text-sm text-gray-500">
+                  <span className={`inline-flex px-2 py-1 text-xs rounded-full ${
+                    field.isNullable === 'YES' 
+                      ? 'bg-green-100 text-green-800' 
+                      : 'bg-red-100 text-red-800'
+                  }`}>
+                    {field.isNullable === 'YES' ? 'Yes' : 'No'}
+                  </span>
+                </td>
+                <td className="px-4 py-2 text-sm">
+                  <div className="flex space-x-1">
+                    {field.isPrimaryKey === 'YES' && (
+                      <span className="inline-flex px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                        PK
+                      </span>
+                    )}
+                    {field.isForeignKey === 'YES' && (
+                      <span className="inline-flex px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded-full">
+                        FK
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="px-4 py-2 text-sm text-gray-500">
+                  {field.defaultValue || '-'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

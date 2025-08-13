@@ -1,7 +1,8 @@
 import React from 'react';
-import { Save } from 'lucide-react';
+import { Save, ArrowRight } from 'lucide-react';
 import { SourceSystem } from '../../lib/api';
 import TableFields from './TableFields';
+import TableSelection from './TableSelection';
 
 interface SchemaPreviewProps {
   previewData: {
@@ -18,10 +19,12 @@ interface SchemaPreviewProps {
   };
   sources: SourceSystem[];
   selectedTable: string | null;
+  selectedTables: string[];
   tableFields: any[];
   loading: boolean;
   loadingDescriptions: boolean;
   onTableSelect: (table: string) => void;
+  onTableSelectionChange: (selectedTables: string[]) => void;
   onImport: () => void;
 }
 
@@ -30,10 +33,12 @@ export default function SchemaPreview({
   config,
   sources,
   selectedTable,
+  selectedTables,
   tableFields,
   loading,
   loadingDescriptions,
   onTableSelect,
+  onTableSelectionChange,
   onImport
 }: SchemaPreviewProps) {
   if (!previewData) {
@@ -64,24 +69,40 @@ export default function SchemaPreview({
         </div>
       </div>
 
-      <div>
-        <h3 className="font-medium mb-4">
-          Available Tables ({previewData.tables.length})
-        </h3>
-        <div className="grid grid-cols-3 gap-4">
-          {previewData.tables.map((table) => (
-            <div
-              key={table}
-              onClick={() => onTableSelect(table)}
-              className={`p-3 bg-gray-50 rounded-lg cursor-pointer transition-colors ${
-                selectedTable === table ? 'ring-2 ring-[#003B7E] bg-blue-50' : 'hover:bg-gray-100'
-              }`}
-            >
-              <p className="font-medium">{table}</p>
-            </div>
-          ))}
+      {/* Table Selection */}
+      <TableSelection
+        tables={previewData.tables}
+        selectedTables={selectedTables}
+        onTableSelectionChange={onTableSelectionChange}
+        loading={loading}
+      />
+
+      {/* Preview Selected Table */}
+      {selectedTables.length > 0 && (
+        <div className="border-t pt-6">
+          <h3 className="font-medium mb-4">Preview Table Schema</h3>
+          <div className="grid grid-cols-4 gap-2 mb-4">
+            {selectedTables.slice(0, 8).map((table) => (
+              <button
+                key={table}
+                onClick={() => onTableSelect(table)}
+                className={`p-2 text-sm rounded-lg transition-colors ${
+                  selectedTable === table 
+                    ? 'bg-[#003B7E] text-white' 
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                {table}
+              </button>
+            ))}
+            {selectedTables.length > 8 && (
+              <div className="p-2 text-sm text-gray-500 bg-gray-50 rounded-lg flex items-center justify-center">
+                +{selectedTables.length - 8} more
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {selectedTable && tableFields.length > 0 && (
         <TableFields
@@ -94,11 +115,12 @@ export default function SchemaPreview({
       <div className="flex justify-end">
         <button
           onClick={onImport}
-          disabled={loading}
-          className="bg-[#003B7E] text-white px-4 py-2 rounded-lg hover:bg-[#002c5f] transition-colors disabled:opacity-50 flex items-center"
+          disabled={loading || selectedTables.length === 0}
+          className="bg-[#003B7E] text-white px-6 py-2 rounded-lg hover:bg-[#002c5f] transition-colors disabled:opacity-50 flex items-center space-x-2"
         >
           <Save className="h-4 w-4 mr-2" />
-          Import to Dictionary
+          <span>Import {selectedTables.length} Table{selectedTables.length !== 1 ? 's' : ''}</span>
+          <ArrowRight className="h-4 w-4" />
         </button>
       </div>
     </div>

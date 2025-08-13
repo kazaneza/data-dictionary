@@ -66,6 +66,7 @@ export default function DatabaseImport() {
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
   const [sources, setSources] = useState<api.SourceSystem[]>([]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
+  const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [tableFields, setTableFields] = useState<TableField[]>([]);
 
   useEffect(() => {
@@ -97,6 +98,8 @@ export default function DatabaseImport() {
       setLoading(true);
       const response = await axios.post(`${API_URL}/api/database/connect`, config);
       setPreviewData(response.data);
+      // Auto-select all tables by default, but user can change this
+      setSelectedTables(response.data.tables || []);
       toast.success('Successfully connected to database');
     } catch (error) {
       console.error('Failed to connect:', error);
@@ -106,7 +109,22 @@ export default function DatabaseImport() {
     }
   };
 
+  const handleTableSelectionChange = (newSelectedTables: string[]) => {
+    setSelectedTables(newSelectedTables);
+    // If the currently previewed table is no longer selected, clear the preview
+    if (selectedTable && !newSelectedTables.includes(selectedTable)) {
+      setSelectedTable(null);
+      setTableFields([]);
+    }
+  };
+
   const handleTableSelect = async (tableName: string) => {
+    // Only allow selection of tables that are in the selected list
+    if (!selectedTables.includes(tableName)) {
+      toast.error('Please select this table first before previewing');
+      return;
+    }
+
     try {
       setSelectedTable(tableName);
       setLoading(true);
@@ -162,8 +180,8 @@ export default function DatabaseImport() {
   };
 
   const handleImport = async () => {
-    if (!previewData) {
-      toast.error('No data to import');
+    if (!previewData || selectedTables.length === 0) {
+      toast.error('Please select at least one table to import');
       return;
     }
 
@@ -180,7 +198,10 @@ export default function DatabaseImport() {
         version: config.version
       });
 
-      for (const tableName of previewData.tables) {
+      let importedCount = 0;
+      const totalTables = selectedTables.length;
+
+      for (const tableName of selectedTables) {
         const { fields: tableFields, tableDescription } = await fetchTableFields(tableName);
 
         const createdTable = await api.createTable({
@@ -202,10 +223,11 @@ export default function DatabaseImport() {
           });
         }
 
-        toast.success(`Imported table: ${tableName}`);
+        importedCount++;
+        toast.success(`Imported table: ${tableName} (${importedCount}/${totalTables})`);
       }
 
-      toast.success('Successfully imported database to data dictionary');
+      toast.success(`Successfully imported ${importedCount} tables to data dictionary`);
 
       setConfig({
         server: '',
@@ -222,6 +244,7 @@ export default function DatabaseImport() {
       });
       setPreviewData(null);
       setTableFields([]);
+      setSelectedTables([]);
       setSelectedTable(null);
       setStep('info');
     } catch (error) {
@@ -292,10 +315,12 @@ export default function DatabaseImport() {
             config={config}
             sources={sources}
             selectedTable={selectedTable}
+            selectedTables={selectedTables}
             tableFields={tableFields}
             loading={loading}
             loadingDescriptions={loadingDescriptions}
             onTableSelect={handleTableSelect}
+            onTableSelectionChange={handleTableSelectionChange}
             onImport={handleImport}
           />
         </div>
