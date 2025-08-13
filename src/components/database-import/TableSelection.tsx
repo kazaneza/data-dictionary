@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { Search, CheckSquare, Square, Database, Table2, Loader2 } from 'lucide-react';
 
 interface TableSelectionProps {
@@ -15,7 +16,6 @@ export default function TableSelection({
   loading = false
 }: TableSelectionProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectAll, setSelectAll] = useState(false);
 
   const filteredTables = useMemo(() => {
     if (!searchTerm) return tables;
@@ -24,26 +24,48 @@ export default function TableSelection({
     );
   }, [tables, searchTerm]);
 
-  const handleSelectAll = () => {
-    if (selectAll) {
-      onTableSelectionChange([]);
-      setSelectAll(false);
-    } else {
-      onTableSelectionChange(filteredTables);
-      setSelectAll(true);
-    }
-  };
+  // Memoize selection state calculations
+  const selectionState = useMemo(() => {
+    const filteredSelectedCount = filteredTables.filter(table => 
+      selectedTables.includes(table)
+    ).length;
+    const allFilteredSelected = filteredSelectedCount === filteredTables.length && filteredTables.length > 0;
+    const someFilteredSelected = filteredSelectedCount > 0;
+    
+    return {
+      allSelected: allFilteredSelected,
+      someSelected: someFilteredSelected,
+      selectedCount: filteredSelectedCount
+    };
+  }, [filteredTables, selectedTables]);
 
-  const handleTableToggle = (tableName: string) => {
+  const handleSelectAll = useCallback(() => {
+    if (selectionState.allSelected) {
+      // Deselect all filtered tables
+      const remainingSelected = selectedTables.filter(table => 
+        !filteredTables.includes(table)
+      );
+      onTableSelectionChange(remainingSelected);
+    } else {
+      // Select all filtered tables (add to existing selection)
+      const newSelection = [...new Set([...selectedTables, ...filteredTables])];
+      onTableSelectionChange(newSelection);
+    }
+  }, [filteredTables, selectedTables, onTableSelectionChange, selectionState.allSelected]);
+
+  const handleTableToggle = useCallback((tableName: string) => {
     const isSelected = selectedTables.includes(tableName);
     if (isSelected) {
       onTableSelectionChange(selectedTables.filter(t => t !== tableName));
     } else {
       onTableSelectionChange([...selectedTables, tableName]);
     }
-  };
+  }, [selectedTables, onTableSelectionChange]);
 
-  const isTableSelected = (tableName: string) => selectedTables.includes(tableName);
+  // Memoize search handler to prevent unnecessary re-renders
+  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value);
+  }, []);
 
   if (loading) {
     return (
@@ -87,7 +109,7 @@ export default function TableSelection({
           <input
             type="text"
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={handleSearchChange}
             placeholder="Search tables..."
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003B7E]/50"
           />
@@ -96,50 +118,37 @@ export default function TableSelection({
           onClick={handleSelectAll}
           className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
         >
-          {selectAll ? (
+          {selectionState.allSelected ? (
             <CheckSquare className="h-4 w-4 text-[#003B7E]" />
           ) : (
-            <Square className="h-4 w-4 text-gray-400" />
+            <Square className={`h-4 w-4 ${selectionState.someSelected ? 'text-[#003B7E]' : 'text-gray-400'}`} />
           )}
           <span className="text-sm">
-            {selectAll ? 'Deselect All' : 'Select All'}
+            {selectionState.allSelected ? 'Deselect All' : 'Select All'}
+            {searchTerm && ` (${filteredTables.length})`}
           </span>
         </button>
       </div>
 
       {/* Table List */}
-      <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
+      <div className="max-h-80 overflow-y-auto border border-gray-200 rounded-lg">
         {filteredTables.length === 0 ? (
           <div className="p-4 text-center text-gray-500">
             No tables match your search
           </div>
         ) : (
           <div className="divide-y divide-gray-200">
-            {filteredTables.map((tableName) => (
-              <div
-                key={tableName}
-                className={`flex items-center space-x-3 p-3 hover:bg-gray-50 cursor-pointer transition-colors ${
-                  isTableSelected(tableName) ? 'bg-blue-50' : ''
-                }`}
-                onClick={() => handleTableToggle(tableName)}
-              >
-                <div className="flex-shrink-0">
-                  {isTableSelected(tableName) ? (
-                    <CheckSquare className="h-5 w-5 text-[#003B7E]" />
-                  ) : (
-                    <Square className="h-5 w-5 text-gray-400" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">
-                    {tableName}
-                  </p>
-                </div>
-                <div className="flex-shrink-0">
-                  <Table2 className="h-4 w-4 text-gray-400" />
-                </div>
-              </div>
-            ))}
+            {filteredTables.map((tableName) => {
+              const isSelected = selectedTables.includes(tableName);
+              return (
+                <TableRow
+                  key={tableName}
+                  tableName={tableName}
+                  isSelected={isSelected}
+                  onToggle={handleTableToggle}
+                />
+              );
+            })}
           </div>
         )}
       </div>
@@ -174,3 +183,43 @@ export default function TableSelection({
     </div>
   );
 }
+
+// Memoized table row component to prevent unnecessary re-renders
+const TableRow = React.memo(({ 
+  tableName, 
+  isSelected, 
+  onToggle 
+}: { 
+  tableName: string; 
+  isSelected: boolean; 
+  onToggle: (tableName: string) => void; 
+}) => {
+  const handleClick = useCallback(() => {
+    onToggle(tableName);
+  }, [tableName, onToggle]);
+
+  return (
+    <div
+      className={`flex items-center space-x-3 p-3 hover:bg-gray-50 cursor-pointer transition-colors ${
+        isSelected ? 'bg-blue-50' : ''
+      }`}
+      onClick={handleClick}
+    >
+      <div className="flex-shrink-0">
+        {isSelected ? (
+          <CheckSquare className="h-5 w-5 text-[#003B7E]" />
+        ) : (
+          <Square className="h-5 w-5 text-gray-400" />
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-gray-900 truncate">
+          {tableName}
+        </p>
+      </div>
+      <div className="flex-shrink-0">
+        <Table2 className="h-4 w-4 text-gray-400" />
+      </div>
+    </div>
+  );
+});

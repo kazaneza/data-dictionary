@@ -45,6 +45,17 @@ interface TableData {
 
 const API_URL = 'http://10.24.37.99:8000';
 
+// Constants for state management
+const IMPORT_STATE_KEY = 'database_import_state';
+
+interface ImportState {
+  config: DatabaseConfig;
+  previewData: PreviewData | null;
+  selectedTables: string[];
+  step: 'info' | 'credentials';
+  timestamp: number;
+}
+
 export default function DatabaseImport() {
   const [step, setStep] = useState<'info' | 'credentials'>('info');
   const [config, setConfig] = useState<DatabaseConfig>({
@@ -300,6 +311,29 @@ export default function DatabaseImport() {
       return;
     }
     setStep('credentials');
+  };
+
+  const handleClearState = () => {
+    localStorage.removeItem(IMPORT_STATE_KEY);
+    setConfig({
+      server: '',
+      database: '',
+      username: '',
+      password: '',
+      schema: '',
+      source_id: '',
+      description: '',
+      type: '',
+      platform: '',
+      location: '',
+      version: ''
+    });
+    setPreviewData(null);
+    setTableFields([]);
+    setSelectedTables([]);
+    setSelectedTable(null);
+    setStep('info');
+    toast.success('Import session cleared');
   };
 
   return (
