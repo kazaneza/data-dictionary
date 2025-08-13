@@ -1,0 +1,8 @@
+Table Name,Table Description,Field Name,Data Type,Description,Nullable,Primary Key,Foreign Key,Default Value
+customers,Customer information,id,uuid,Primary key,No,Yes,No,
+customers,Customer information,email,varchar(255),Customer email address,No,No,No,
+customers,Customer information,name,varchar(100),Customer full name,No,No,No,
+customers,Customer information,created_at,timestamp,Record creation date,Yes,No,No,CURRENT_TIMESTAMP
+orders,Order details,id,uuid,Primary key,No,Yes,No,
+orders,Order details,customer_id,uuid,Reference to customers table,No,No,Yes,
+orders,Order details,total_amount,decimal(10;2),Order total amount,No,No,No,0

@@ -1,0 +1,4 @@
+Table Name,Description,Category ID
+customers,Stores customer information,CB4B9033-F37A-4BF3-927B-066204FC5F08
+orders,Order management table,CB4B9033-F37A-4BF3-927B-066204FC5F08
+products,Product catalog,CB4B9033-F37A-4BF3-927B-066204FC5F08

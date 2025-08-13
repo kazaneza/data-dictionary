@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+sqlalchemy
+pyodbc
+pydantic
+python-dotenv
+ldap3
+PyJWT
+openai
+cx_Oracle
+psycopg2-binary
+numpy
+mysql-connector-python
