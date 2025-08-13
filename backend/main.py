@@ -17,6 +17,7 @@ import jwt
 from jwt.exceptions import ExpiredSignatureError, PyJWTError
 from config import ADMIN_USERS, MANAGER_USERS, JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRATION_MINUTES
 from routers import database_import
+from routers import search
 
 # Configure logging
 logging.basicConfig(
@@ -51,6 +52,12 @@ app.include_router(
     tags=["database-import"]
 )
 
+# Add the search router
+app.include_router(
+    search.router,
+    prefix="/api",
+    tags=["search"]
+)
 # SQL Server connection settings
 SERVER = os.getenv("DB_SERVER")
 DATABASE = os.getenv("DB_NAME")

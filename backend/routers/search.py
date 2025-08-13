@@ -74,6 +74,70 @@ def cosine_similarity(embedding1: List[float], embedding2: List[float]) -> float
     b = np.array(embedding2)
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
+def semantic_search_with_openai(query: str, items: List[dict], item_type: str) -> List[dict]:
+    """Use OpenAI to perform semantic search and scoring"""
+    try:
+        # Create a prompt for OpenAI to analyze and score items
+        items_text = "\n".join([
+            f"{i+1}. {item['name']}: {item.get('description', 'No description')}"
+            for i, item in enumerate(items)
+        ])
+        
+        prompt = f"""You are analyzing a data dictionary search query. 
+
+Query: "{query}"
+
+Available {item_type}s:
+{items_text}
+
+Based on the search query, analyze which {item_type}s are most relevant. Consider:
+- Direct name matches
+- Semantic meaning and context
+- Business domain relevance
+- Functional relationships
+
+Return a JSON array with objects containing:
+- "index": the item number (1-based)
+- "score": relevance score from 0.0 to 1.0
+- "reason": brief explanation of relevance
+
+Only include items with score >= 0.3. Sort by score descending."""
+
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a data dictionary search expert. Analyze queries and match them to database objects based on semantic meaning, not just keyword matching."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=2000,
+            temperature=0.1
+        )
+        
+        # Parse the response
+        import json
+        try:
+            scores = json.loads(response.choices[0].message.content)
+            
+            # Apply scores to items
+            scored_items = []
+            for score_item in scores:
+                index = score_item["index"] - 1  # Convert to 0-based
+                if 0 <= index < len(items):
+                    item = items[index].copy()
+                    item["score"] = score_item["score"]
+                    item["reason"] = score_item.get("reason", "")
+                    scored_items.append(item)
+            
+            return sorted(scored_items, key=lambda x: x["score"], reverse=True)
+            
+        except json.JSONDecodeError:
+            logger.error("Failed to parse OpenAI response as JSON")
+            return []
+            
+    except Exception as e:
+        logger.error(f"Error in semantic search: {str(e)}")
+        return []
+
 @router.post("/search", response_model=SearchResponse)
 async def search(
     request: SearchRequest,
@@ -81,9 +145,6 @@ async def search(
 ):
     try:
         logger.info(f"Processing search query: {request.query}")
-        
-        # Get embedding for search query
-        query_embedding = get_embedding(request.query)
         
         # Build base queries with joins
         table_query = """
@@ -141,58 +202,65 @@ async def search(
 
         search_results = []
 
-        # Process tables
-        for table in tables:
-            # Create rich context for semantic search
-            table_content = f"""
-                Table Name: {table.name}
-                Description: {table.description or ''}
-                Database: {table.database_name}
-                Source System: {table.source_name}
-                Category: {table.category_name or 'Uncategorized'}
-            """
+        # Process tables with OpenAI semantic search
+        if tables:
+            table_items = []
+            for table in tables:
+                table_content = f"{table.name} - {table.description or ''} (Database: {table.database_name}, Source: {table.source_name})"
+                table_items.append({
+                    "id": str(table.id),
+                    "name": table.name,
+                    "description": table.description,
+                    "databaseName": table.database_name,
+                    "sourceName": table.source_name,
+                    "content": table_content
+                })
             
-            # Get embedding and calculate similarity
-            table_embedding = get_embedding(table_content)
-            similarity = cosine_similarity(query_embedding, table_embedding)
-
-            if similarity >= request.min_score:
-                search_results.append(TableResult(
-                    id=str(table.id),
-                    name=table.name,
-                    description=table.description,
-                    databaseName=table.database_name,
-                    sourceName=table.source_name,
-                    score=float(similarity)
-                ))
-
-        # Process fields
-        for field in fields:
-            # Create rich context for semantic search
-            field_content = f"""
-                Field Name: {field.name}
-                Description: {field.description or ''}
-                Data Type: {field.type}
-                Table: {field.table_name}
-                Database: {field.database_name}
-                Source System: {field.source_name}
-            """
+            # Use OpenAI for semantic search
+            scored_tables = semantic_search_with_openai(request.query, table_items, "table")
             
-            # Get embedding and calculate similarity
-            field_embedding = get_embedding(field_content)
-            similarity = cosine_similarity(query_embedding, field_embedding)
+            for table_item in scored_tables:
+                if table_item["score"] >= request.min_score:
+                    search_results.append(TableResult(
+                        id=table_item["id"],
+                        name=table_item["name"],
+                        description=table_item["description"],
+                        databaseName=table_item["databaseName"],
+                        sourceName=table_item["sourceName"],
+                        score=float(table_item["score"])
+                    ))
 
-            if similarity >= request.min_score:
-                search_results.append(FieldResult(
-                    id=str(field.id),
-                    name=field.name,
-                    description=field.description,
-                    tableName=field.table_name,
-                    databaseName=field.database_name,
-                    sourceName=field.source_name,
-                    dataType=field.type,
-                    score=float(similarity)
-                ))
+        # Process fields with OpenAI semantic search
+        if fields:
+            field_items = []
+            for field in fields:
+                field_content = f"{field.name} ({field.type}) - {field.description or ''} (Table: {field.table_name}, Database: {field.database_name})"
+                field_items.append({
+                    "id": str(field.id),
+                    "name": field.name,
+                    "description": field.description,
+                    "tableName": field.table_name,
+                    "databaseName": field.database_name,
+                    "sourceName": field.source_name,
+                    "dataType": field.type,
+                    "content": field_content
+                })
+            
+            # Use OpenAI for semantic search
+            scored_fields = semantic_search_with_openai(request.query, field_items, "field")
+            
+            for field_item in scored_fields:
+                if field_item["score"] >= request.min_score:
+                    search_results.append(FieldResult(
+                        id=field_item["id"],
+                        name=field_item["name"],
+                        description=field_item["description"],
+                        tableName=field_item["tableName"],
+                        databaseName=field_item["databaseName"],
+                        sourceName=field_item["sourceName"],
+                        dataType=field_item["dataType"],
+                        score=float(field_item["score"])
+                    ))
 
         # Sort results by similarity score
         search_results.sort(key=lambda x: x.score, reverse=True)

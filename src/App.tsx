@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
-import { Settings as SettingsIcon, LayoutDashboard, Database, FolderCog, LogOut, Link2 } from 'lucide-react';
+import { Settings as SettingsIcon, LayoutDashboard, Database, FolderCog, LogOut, Link2, Search } from 'lucide-react';
 import { Toaster } from 'react-hot-toast';
 import Dashboard from './pages/Dashboard';
 import DataDictionary from './pages/DataDictionary';
+import SearchPage from './pages/Search';
 import Settings from './pages/Settings';
 import Manage from './pages/Manage';
 import Login from './pages/Login';
@@ -119,6 +120,10 @@ function App() {
                   <Database className="h-4 w-4" />
                   <span>Data Dictionary</span>
                 </NavLink>
+                <NavLink to="/search">
+                  <Search className="h-4 w-4" />
+                  <span>Search</span>
+                </NavLink>
                 <NavLink to="/manage" show={canManage}>
                   <FolderCog className="h-4 w-4" />
                   <span>Manage</span>
@@ -159,6 +164,14 @@ function App() {
               element={
                 <PrivateRoute>
                   <DataDictionary />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/search"
+              element={
+                <PrivateRoute>
+                  <SearchPage />
                 </PrivateRoute>
               }
             />
