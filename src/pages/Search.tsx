@@ -84,6 +84,7 @@ export default function Search() {
     databases: [],
     categories: []
   });
+  const [filtersLoaded, setFiltersLoaded] = useState(false);
   
   // Debounce the search query to avoid excessive API calls
   const debouncedQuery = useDebounce(query, 500);
@@ -108,9 +109,11 @@ export default function Search() {
         if (response.ok) {
           const data = await response.json();
           setAvailableFilters(data);
+          setFiltersLoaded(true);
         }
       } catch (error) {
         console.error('Failed to load filters:', error);
+        setFiltersLoaded(true);
       }
     };
     loadFilters();
@@ -376,122 +379,6 @@ export default function Search() {
                     )}
                   </button>
                 </div>
-    } catch (error) {
-      console.error('Search error:', error);
-      setError('Failed to perform search');
-      toast.error('Search failed. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const clearSearch = () => {
-    setQuery('');
-    setResults([]);
-    setError(null);
-  };
-
-  return (
-    <div className="min-h-[calc(100vh-5rem)] flex flex-col bg-gradient-to-b from-gray-50 to-white">
-      {/* Command Palette */}
-      {showCommandPalette && (
-        <div className="fixed inset-0 bg-black/50 flex items-start justify-center pt-[20vh] z-50">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
-            <div className="p-4 border-b">
-              <div className="flex items-center space-x-2">
-                <Command className="h-5 w-5 text-gray-400" />
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Type a command or search..."
-                  className="flex-1 bg-transparent border-none outline-none text-lg"
-                  autoFocus
-                />
-                <kbd className="px-2 py-1 text-xs bg-gray-100 rounded-md">ESC</kbd>
-              </div>
-            </div>
-            <div className="p-2">
-              <div className="px-2 py-1 text-xs font-medium text-gray-500">
-                Quick Actions
-              </div>
-              <button
-                onClick={() => {
-                  handleSearch();
-                  setShowCommandPalette(false);
-                }}
-                className="w-full px-2 py-2 flex items-center space-x-2 hover:bg-gray-100 rounded-lg"
-              >
-                <SearchIcon className="h-4 w-4 text-gray-400" />
-                <span>Search Data Dictionary</span>
-              </button>
-              <button
-                onClick={() => {
-                  setShowFilters(true);
-                  setShowCommandPalette(false);
-                }}
-                className="w-full px-2 py-2 flex items-center space-x-2 hover:bg-gray-100 rounded-lg"
-              >
-                <Filter className="h-4 w-4 text-gray-400" />
-                <span>Show Search Filters</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Search Header */}
-      <div className="flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative">
-        <div className="absolute inset-0 bg-gradient-to-b from-[#003B7E]/5 to-transparent pointer-events-none" />
-        
-        <div className="relative max-w-4xl w-full">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2 flex items-center justify-center">
-            Data Dictionary Search
-            <Sparkles className="h-8 w-8 ml-2 text-[#003B7E]" />
-          </h1>
-          <p className="text-lg text-gray-600 text-center mb-8">
-            Search across tables, fields, and descriptions using natural language
-          </p>
-
-          {/* Search Form */}
-          <form onSubmit={handleSearch} className="w-full">
-            <div className="relative group">
-              <div className="absolute inset-0 bg-[#003B7E] rounded-xl opacity-5 group-hover:opacity-10 transition-opacity" />
-              <div className="relative">
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Try 'Find tables containing customer information' or 'Show me fields related to transactions'"
-                  className="w-full px-4 py-4 pl-12 pr-32 text-lg border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#003B7E] focus:border-transparent bg-white shadow-sm"
-                />
-                <SearchIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                
-                <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
-                  {query && (
-                    <button
-                      type="button"
-                      onClick={clearSearch}
-                      className="p-1 hover:bg-gray-100 rounded-full transition-colors"
-                    >
-                      <X className="h-5 w-5 text-gray-400" />
-                    </button>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={loading || !query.trim()}
-                    className="bg-[#003B7E] text-white px-4 py-2 rounded-lg hover:bg-[#002c5f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
-                  >
-                    {loading ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : (
-                      <>
-                        <SearchIcon className="h-4 w-4" />
-                        <span>Search</span>
-                      </>
-                    )}
-                  </button>
-                </div>
               </div>
             </div>
 
@@ -506,7 +393,7 @@ export default function Search() {
                       {searchHistory.map((historyQuery, index) => (
                         <button
                           key={index}
-                          onClick={() => setQuery(historyQuery)}
+                          onClick={() => handleHistoryClick(historyQuery)}
                           className="text-[#003B7E] hover:underline truncate max-w-xs"
                         >
                           {historyQuery}
@@ -532,7 +419,7 @@ export default function Search() {
                 {searchExamples.map((example, index) => (
                   <button
                     key={index}
-                    onClick={() => setQuery(example)}
+                    onClick={() => handleExampleClick(example)}
                     className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-[#003B7E]/20 hover:bg-[#003B7E]/5 transition-colors group"
                   >
                     <div className="flex items-center space-x-2">
