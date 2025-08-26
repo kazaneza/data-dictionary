@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, text
-from typing import List, Optional
+from typing import List, Optional, Union
 import logging
 from openai import OpenAI
 import numpy as np
@@ -170,6 +170,7 @@ IMPORTANT: Return ONLY the JSON array, no other text or formatting. Example:
         logger.error(f"Error in semantic search: {str(e)}")
 
 @router.post("/search", response_model=SearchResponse)
+
 def fallback_keyword_search(query: str, items: List[dict], item_type: str) -> List[dict]:
     """Fallback keyword-based search when OpenAI fails"""
     try:
@@ -210,142 +211,6 @@ def fallback_keyword_search(query: str, items: List[dict], item_type: str) -> Li
         logger.error(f"Error in fallback search: {str(e)}")
         return []
 
-async def search(
-    request: SearchRequest,
-    db: Session = Depends(get_db)
-):
-    try:
-        logger.info(f"Processing search query: {request.query}")
-        
-        # Build base queries with joins
-        table_query = """
-            SELECT 
-                t.id,
-                t.name,
-                t.description,
-                d.name as database_name,
-                s.name as source_name,
-                c.name as category_name
-            FROM tables t
-            JOIN databases d ON t.database_id = d.id
-            JOIN source_systems s ON d.source_id = s.id
-            LEFT JOIN categories c ON t.category_id = c.id
-            WHERE 1=1
-        """
-        
-        field_query = """
-            SELECT 
-                f.id,
-                f.name,
-                f.description,
-                f.type,
-                t.name as table_name,
-                d.name as database_name,
-                s.name as source_name
-            FROM fields f
-            JOIN tables t ON f.table_id = t.id
-            JOIN databases d ON t.database_id = d.id
-            JOIN source_systems s ON d.source_id = s.id
-            WHERE 1=1
-        """
-        
-        # Apply filters
-        params = {}
-        if request.source_filter:
-            table_query += " AND s.name = :source_name"
-            field_query += " AND s.name = :source_name"
-            params['source_name'] = request.source_filter
-            
-        if request.database_filter:
-            table_query += " AND d.name = :database_name"
-            field_query += " AND d.name = :database_name"
-            params['database_name'] = request.database_filter
-
-        # Execute queries
-        tables = []
-        fields = []
-        
-        if not request.type_filter or request.type_filter == 'table':
-            tables = db.execute(text(table_query), params).fetchall()
-            
-        if not request.type_filter or request.type_filter == 'field':
-            fields = db.execute(text(field_query), params).fetchall()
-
-        search_results = []
-
-        # Process tables with OpenAI semantic search
-        if tables:
-            table_items = []
-            for table in tables:
-                table_content = f"{table.name} - {table.description or ''} (Database: {table.database_name}, Source: {table.source_name})"
-                table_items.append({
-                    "id": str(table.id),
-                    "name": table.name,
-                    "description": table.description,
-                    "databaseName": table.database_name,
-                    "sourceName": table.source_name,
-                    "content": table_content
-                })
-            
-            # Use OpenAI for semantic search
-            scored_tables = semantic_search_with_openai(request.query, table_items, "table")
-            
-            for table_item in scored_tables:
-                if table_item["score"] >= request.min_score:
-                    search_results.append(TableResult(
-                        id=table_item["id"],
-                        name=table_item["name"],
-                        description=table_item["description"],
-                        databaseName=table_item["databaseName"],
-                        sourceName=table_item["sourceName"],
-                        score=float(table_item["score"])
-                    ))
-
-        # Process fields with OpenAI semantic search
-        if fields:
-            field_items = []
-            for field in fields:
-                field_content = f"{field.name} ({field.type}) - {field.description or ''} (Table: {field.table_name}, Database: {field.database_name})"
-                field_items.append({
-                    "id": str(field.id),
-                    "name": field.name,
-                    "description": field.description,
-                    "tableName": field.table_name,
-                    "databaseName": field.database_name,
-                    "sourceName": field.source_name,
-                    "dataType": field.type,
-                    "content": field_content
-                })
-            
-            # Use OpenAI for semantic search
-            scored_fields = semantic_search_with_openai(request.query, field_items, "field")
-            
-            for field_item in scored_fields:
-                if field_item["score"] >= request.min_score:
-                    search_results.append(FieldResult(
-                        id=field_item["id"],
-                        name=field_item["name"],
-                        description=field_item["description"],
-                        tableName=field_item["tableName"],
-                        databaseName=field_item["databaseName"],
-                        sourceName=field_item["sourceName"],
-                        dataType=field_item["dataType"],
-                        score=float(field_item["score"])
-                    ))
-
-        # Sort results by similarity score
-        search_results.sort(key=lambda x: x.score, reverse=True)
-        
-        # Log search metrics
-        logger.info(f"Search completed. Found {len(search_results)} results")
-        if search_results:
-            logger.info(f"Top score: {search_results[0].score}")
-        
-        return SearchResponse(
-            query=request.query,
-            total=len(search_results),
-            results=search_results[:20]  # Return top 20 results
-        )
 
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
