@@ -370,7 +370,10 @@ export default function Search() {
   const loadMoreResults = () => {
     const currentCount = displayedResults.length;
     const nextBatch = results.slice(currentCount, currentCount + LOAD_MORE_COUNT);
-    setDisplayedResults([...displayedResults, ...nextBatch]);
+    setDispl
+    }
+  }
+}ayedResults([...displayedResults, ...nextBatch]);
     setShowLoadMore(currentCount + LOAD_MORE_COUNT < results.length);
   };
 
