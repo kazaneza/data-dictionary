@@ -34,6 +34,23 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
+// Custom hook for debounced values
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+}
+
 interface SearchResult {
   type: 'table' | 'field';
   name: string;
@@ -84,7 +101,12 @@ export default function Search() {
     databases: [],
     categories: []
   });
-  const [filtersLoaded, setFiltersLoaded] = useState(false);
+  
+  // Debounce the search query to avoid excessive API calls
+  const debouncedQuery = useDebounce(query, 500);
+  
+  // Track current search request to cancel if needed
+  const [currentSearchController, setCurrentSearchController] = useState<AbortController | null>(null);
   
   // Debounce the search query to avoid excessive API calls
   const debouncedQuery = useDebounce(query, 500);
@@ -98,8 +120,10 @@ export default function Search() {
       setSearchHistory(JSON.parse(history));
     }
 
-    // Load available filters only once
+    // Load available filters only when filters panel is opened
     const loadFilters = async () => {
+      if (filtersLoaded) return;
+      
       try {
         const response = await fetch('http://10.24.37.99:8000/api/search/filters', {
           headers: {
@@ -114,6 +138,27 @@ export default function Search() {
       } catch (error) {
         console.error('Failed to load filters:', error);
         setFiltersLoaded(true);
+      }
+    };
+
+    // Only load filters when filters panel is shown
+    if (showFilters && !filtersLoaded) {
+      loadFilters();
+    }
+
+    const loadFilters = async () => {
+      try {
+        const response = await fetch('http://10.24.37.99:8000/api/search/filters', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setAvailableFilters(data);
+        }
+      } catch (error) {
+        console.error('Failed to load filters:', error);
       }
     };
     loadFilters();
@@ -131,16 +176,30 @@ export default function Search() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [showFilters, filtersLoaded]);
+
+  // Update displayed results when results change
+  useEffect(() => {
+    if (results.length === 0) {
+      setDisplayedResults([]);
+      setShowLoadMore(false);
+    } else {
+      const initial = results.slice(0, INITIAL_RESULTS_COUNT);
+      setDisplayedResults(initial);
+      setShowLoadMore(results.length > INITIAL_RESULTS_COUNT);
+    }
+  }, [results]);
 
   // Effect to handle debounced search
   useEffect(() => {
-    if (debouncedQuery.trim()) {
+    if (debouncedQuery.trim() && debouncedQuery.length >= 2) {
       performSearch(debouncedQuery);
     } else {
       // Clear results immediately when query is empty
       setResults([]);
+      setDisplayedResults([]);
       setError(null);
+      setShowLoadMore(false);
       // Cancel any ongoing search
       if (currentSearchController) {
         currentSearchController.abort();
@@ -157,6 +216,11 @@ export default function Search() {
   };
 
   const performSearch = async (searchQuery: string) => {
+    // Don't search if query is too short
+    if (searchQuery.trim().length < 2) {
+      return;
+    }
+
     // Cancel previous search if still running
     if (currentSearchController) {
       currentSearchController.abort();
@@ -191,7 +255,9 @@ export default function Search() {
       }
 
       const data = await response.json();
-      setResults(data.results);
+      // Limit results to prevent UI freezing
+      const limitedResults = data.results.slice(0, 100);
+      setResults(limitedResults);
       saveToHistory(searchQuery);
       setShowCommandPalette(false);
     } catch (error: any) {
@@ -210,9 +276,14 @@ export default function Search() {
 
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!query.trim()) {
+    if (!query.trim() || query.trim().length < 2) {
       setResults([]);
+      setDisplayedResults([]);
       setError(null);
+      setShowLoadMore(false);
+      if (query.trim().length < 2 && query.trim().length > 0) {
+        toast.error('Please enter at least 2 characters to search');
+      }
       return;
     }
 
@@ -226,7 +297,9 @@ export default function Search() {
     // If query is empty, clear results immediately
     if (!newQuery.trim()) {
       setResults([]);
+      setDisplayedResults([]);
       setError(null);
+      setShowLoadMore(false);
       if (currentSearchController) {
         currentSearchController.abort();
         setCurrentSearchController(null);
@@ -238,12 +311,21 @@ export default function Search() {
   const clearSearch = () => {
     setQuery('');
     setResults([]);
+    setDisplayedResults([]);
     setError(null);
+    setShowLoadMore(false);
     if (currentSearchController) {
       currentSearchController.abort();
       setCurrentSearchController(null);
     }
     setLoading(false);
+  };
+
+  const loadMoreResults = () => {
+    const currentCount = displayedResults.length;
+    const nextBatch = results.slice(currentCount, currentCount + LOAD_MORE_COUNT);
+    setDisplayedResults([...displayedResults, ...nextBatch]);
+    setShowLoadMore(currentCount + LOAD_MORE_COUNT < results.length);
   };
 
   const handleExampleClick = (example: string) => {
@@ -379,6 +461,117 @@ export default function Search() {
                     )}
                   </button>
                 </div>
+    } catch (error) {
+      console.error('Search error:', error);
+      setError('Failed to perform search');
+      toast.error('Search failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearSearch = () => {
+  return (
+    <div className="min-h-[calc(100vh-5rem)] flex flex-col bg-gradient-to-b from-gray-50 to-white">
+      {/* Command Palette */}
+      {showCommandPalette && (
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center pt-[20vh] z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
+            <div className="p-4 border-b">
+              <div className="flex items-center space-x-2">
+                <Command className="h-5 w-5 text-gray-400" />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Type a command or search..."
+                  className="flex-1 bg-transparent border-none outline-none text-lg"
+                  autoFocus
+                />
+                <kbd className="px-2 py-1 text-xs bg-gray-100 rounded-md">ESC</kbd>
+              </div>
+            </div>
+            <div className="p-2">
+              <div className="px-2 py-1 text-xs font-medium text-gray-500">
+                Quick Actions
+              </div>
+              <button
+                onClick={() => {
+                  handleSearch();
+                  setShowCommandPalette(false);
+                }}
+                className="w-full px-2 py-2 flex items-center space-x-2 hover:bg-gray-100 rounded-lg"
+              >
+                <SearchIcon className="h-4 w-4 text-gray-400" />
+                <span>Search Data Dictionary</span>
+              </button>
+              <button
+                onClick={() => {
+                  setShowFilters(true);
+                  setShowCommandPalette(false);
+                }}
+                className="w-full px-2 py-2 flex items-center space-x-2 hover:bg-gray-100 rounded-lg"
+              >
+                <Filter className="h-4 w-4 text-gray-400" />
+                <span>Show Search Filters</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Search Header */}
+      <div className="flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative">
+        <div className="absolute inset-0 bg-gradient-to-b from-[#003B7E]/5 to-transparent pointer-events-none" />
+        
+        <div className="relative max-w-4xl w-full">
+          <h1 className="text-4xl font-bold text-gray-900 mb-2 flex items-center justify-center">
+            Data Dictionary Search
+            <Sparkles className="h-8 w-8 ml-2 text-[#003B7E]" />
+          </h1>
+          <p className="text-lg text-gray-600 text-center mb-8">
+            Search across tables, fields, and descriptions using natural language
+          </p>
+
+          {/* Search Form */}
+          <form onSubmit={handleSearch} className="w-full">
+            <div className="relative group">
+              <div className="absolute inset-0 bg-[#003B7E] rounded-xl opacity-5 group-hover:opacity-10 transition-opacity" />
+              <div className="relative">
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Try 'Find tables containing customer information' or 'Show me fields related to transactions'"
+                  className="w-full px-4 py-4 pl-12 pr-32 text-lg border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#003B7E] focus:border-transparent bg-white shadow-sm"
+                />
+                <SearchIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                
+                <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
+                  {query && (
+                    <button
+                      type="button"
+                      onClick={clearSearch}
+                      className="p-1 hover:bg-gray-100 rounded-full transition-colors"
+                    >
+                      <X className="h-5 w-5 text-gray-400" />
+                    </button>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={loading || !query.trim()}
+                    className="bg-[#003B7E] text-white px-4 py-2 rounded-lg hover:bg-[#002c5f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <>
+                        <SearchIcon className="h-4 w-4" />
+                        <span>Search</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -393,7 +586,7 @@ export default function Search() {
                       {searchHistory.map((historyQuery, index) => (
                         <button
                           key={index}
-                          onClick={() => handleHistoryClick(historyQuery)}
+                          onClick={() => setQuery(historyQuery)}
                           className="text-[#003B7E] hover:underline truncate max-w-xs"
                         >
                           {historyQuery}
@@ -419,7 +612,7 @@ export default function Search() {
                 {searchExamples.map((example, index) => (
                   <button
                     key={index}
-                    onClick={() => handleExampleClick(example)}
+                    onClick={() => setQuery(example)}
                     className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-[#003B7E]/20 hover:bg-[#003B7E]/5 transition-colors group"
                   >
                     <div className="flex items-center space-x-2">
@@ -437,6 +630,13 @@ export default function Search() {
             {/* Filters Panel */}
             {showFilters && (
               <div className="mt-4 p-4 bg-white rounded-lg shadow-sm border border-gray-200">
+                {!filtersLoaded && (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-5 w-5 animate-spin text-[#003B7E] mr-2" />
+                    <span className="text-sm text-gray-600">Loading filters...</span>
+                  </div>
+                )}
+                {filtersLoaded && (
                 {!filtersLoaded && (
                   <div className="flex items-center justify-center py-4">
                     <Loader2 className="h-5 w-5 animate-spin text-[#003B7E] mr-2" />
@@ -514,6 +714,7 @@ export default function Search() {
                   </div>
                 </div>
                 )}
+                )}
               </div>
             )}
           </form>
@@ -523,6 +724,19 @@ export default function Search() {
       {/* Search Results */}
       <div className="flex-1 py-8">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          {query.trim() && query.trim().length < 2 && (
+            <div className="text-center py-8">
+              <div className="inline-block p-4 rounded-full bg-yellow-100 mb-4">
+                <SearchIcon className="h-6 w-6 text-yellow-600" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900">
+                Keep typing...
+              </h3>
+              <p className="mt-1 text-gray-500">
+                Enter at least 2 characters to start searching
+              </p>
+            </div>
+          )}
           {error ? (
             <div className="text-center text-red-600 bg-red-50 p-4 rounded-lg">
               {error}
@@ -532,13 +746,13 @@ export default function Search() {
               <Loader2 className="h-8 w-8 animate-spin text-[#003B7E] mr-3" />
               <span className="text-gray-600">Searching...</span>
             </div>
-          ) : results.length > 0 ? (
+          ) : displayedResults.length > 0 ? (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-gray-900 flex items-center">
                   Search Results
                   <span className="ml-2 text-sm font-normal text-gray-500">
-                    ({results.length} matches)
+                    (showing {displayedResults.length} of {results.length} matches)
                   </span>
                 </h2>
                 <button
@@ -550,7 +764,7 @@ export default function Search() {
               </div>
               
               <div className="grid grid-cols-1 gap-4">
-                {results.map((result) => (
+                {displayedResults.map((result) => (
                   <div
                     key={result.id}
                     className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-all duration-200 border border-gray-100"
@@ -618,8 +832,21 @@ export default function Search() {
                   </div>
                 ))}
               </div>
+              
+              {/* Load More Button */}
+              {showLoadMore && (
+                <div className="flex justify-center mt-8">
+                  <button
+                    onClick={loadMoreResults}
+                    className="bg-[#003B7E] text-white px-6 py-2 rounded-lg hover:bg-[#002c5f] transition-colors flex items-center space-x-2"
+                  >
+                    <span>Load More Results</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
             </div>
-          ) : debouncedQuery && !loading ? (
+          ) : debouncedQuery && debouncedQuery.length >= 2 && !loading ? (
             <div className="text-center py-12">
               <div className="inline-block p-4 rounded-full bg-gray-100 mb-4">
                 <SearchIcon className="h-6 w-6 text-gray-400" />
