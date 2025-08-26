@@ -7,6 +7,7 @@ import * as api from '../lib/api';
 import DatabaseInfoForm from '../components/database-import/DatabaseInfoForm';
 import DatabaseCredentialsForm from '../components/database-import/DatabaseCredentialsForm';
 import SchemaPreview from '../components/database-import/SchemaPreview';
+import ConnectionHistory, { saveConnectionHistory, createHistoryItem } from '../components/database-import/ConnectionHistory';
 
 interface DatabaseConfig {
   server: string;
@@ -45,19 +46,8 @@ interface TableData {
 
 const API_URL = 'http://10.24.37.99:8000';
 
-// Constants for state management
-const IMPORT_STATE_KEY = 'database_import_state';
-
-interface ImportState {
-  config: DatabaseConfig;
-  previewData: PreviewData | null;
-  selectedTables: string[];
-  step: 'info' | 'credentials';
-  timestamp: number;
-}
-
 export default function DatabaseImport() {
-  const [step, setStep] = useState<'info' | 'credentials'>('info');
+  const [step, setStep] = useState<'info' | 'credentials' | 'history'>('history');
   const [config, setConfig] = useState<DatabaseConfig>({
     server: '',
     database: '',
@@ -80,44 +70,9 @@ export default function DatabaseImport() {
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [tableFields, setTableFields] = useState<TableField[]>([]);
 
-  // Load saved state on component mount
-  useEffect(() => {
-    const savedState = localStorage.getItem(IMPORT_STATE_KEY);
-    if (savedState) {
-      try {
-        const state: ImportState = JSON.parse(savedState);
-        // Only restore if saved within last 24 hours
-        if (Date.now() - state.timestamp < 24 * 60 * 60 * 1000) {
-          setConfig(state.config);
-          setPreviewData(state.previewData);
-          setSelectedTables(state.selectedTables);
-          setStep(state.step);
-          if (state.previewData) {
-            toast.success('Restored previous import session');
-          }
-        } else {
-          localStorage.removeItem(IMPORT_STATE_KEY);
-        }
-      } catch (error) {
-        console.error('Failed to restore import state:', error);
-        localStorage.removeItem(IMPORT_STATE_KEY);
-      }
-    }
-  }, []);
-
-  // Save state whenever important data changes
-  useEffect(() => {
-    if (config.source_id || previewData) {
-      const state: ImportState = {
-        config,
-        previewData,
-        selectedTables,
-        step,
-        timestamp: Date.now()
-      };
-      localStorage.setItem(IMPORT_STATE_KEY, JSON.stringify(state));
-    }
-  }, [config, previewData, selectedTables, step]);
+  // Track import progress for history
+  const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
+  const [importStartTime, setImportStartTime] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchSources = async () => {
@@ -134,13 +89,53 @@ export default function DatabaseImport() {
   }, []);
 
   const handleConnect = async () => {
+    const startTime = Date.now();
+    setImportStartTime(startTime);
+    
+    // Create initial history entry
+    const historyItem = createHistoryItem(
+      config,
+      'in_progress',
+      0,
+      0,
+      [],
+      undefined,
+      undefined
+    );
+    setCurrentHistoryId(historyItem.id);
+    saveConnectionHistory(historyItem);
+
     if (!config.source_id) {
       toast.error('Please select a source system');
+      // Update history with failure
+      const failedItem = createHistoryItem(
+        config,
+        'failed',
+        0,
+        0,
+        [],
+        'Source system not selected',
+        Date.now() - startTime
+      );
+      failedItem.id = historyItem.id;
+      saveConnectionHistory(failedItem);
       return;
     }
 
     if (!config.server || !config.database || !config.username || !config.password) {
       toast.error('Please fill in all required fields');
+      // Update history with failure
+      const failedItem = createHistoryItem(
+        config,
+        'failed',
+        0,
+        0,
+        [],
+        'Missing required connection fields',
+        Date.now() - startTime
+      );
+      failedItem.id = historyItem.id;
+      saveConnectionHistory(failedItem);
       return;
     }
 
@@ -150,9 +145,37 @@ export default function DatabaseImport() {
       setPreviewData(response.data);
       // Auto-select all tables by default, but user can change this
       setSelectedTables(response.data.tables || []);
+      
+      // Update history with successful connection
+      const successItem = createHistoryItem(
+        config,
+        'success',
+        response.data.tables?.length || 0,
+        0,
+        [],
+        undefined,
+        Date.now() - startTime
+      );
+      successItem.id = historyItem.id;
+      saveConnectionHistory(successItem);
+      
       toast.success('Successfully connected to database');
     } catch (error) {
       console.error('Failed to connect:', error);
+      
+      // Update history with failure
+      const failedItem = createHistoryItem(
+        config,
+        'failed',
+        0,
+        0,
+        [],
+        error instanceof Error ? error.message : 'Connection failed',
+        Date.now() - startTime
+      );
+      failedItem.id = historyItem.id;
+      saveConnectionHistory(failedItem);
+      
       toast.error('Failed to connect to database');
     } finally {
       setLoading(false);
@@ -230,6 +253,11 @@ export default function DatabaseImport() {
   };
 
   const handleImport = async () => {
+    if (!importStartTime || !currentHistoryId) {
+      toast.error('Import session not properly initialized');
+      return;
+    }
+
     if (!previewData || selectedTables.length === 0) {
       toast.error('Please select at least one table to import');
       return;
@@ -237,6 +265,19 @@ export default function DatabaseImport() {
 
     try {
       setLoading(true);
+      
+      // Update history to show import in progress
+      const inProgressItem = createHistoryItem(
+        config,
+        'in_progress',
+        selectedTables.length,
+        0,
+        [],
+        undefined,
+        undefined
+      );
+      inProgressItem.id = currentHistoryId;
+      saveConnectionHistory(inProgressItem);
 
       const createdDb = await api.createDatabase({
         source_id: config.source_id,
@@ -249,35 +290,78 @@ export default function DatabaseImport() {
       });
 
       let importedCount = 0;
+      const failedTables: string[] = [];
       const totalTables = selectedTables.length;
 
       for (const tableName of selectedTables) {
-        const { fields: tableFields, tableDescription } = await fetchTableFields(tableName);
+        try {
+          const { fields: tableFields, tableDescription } = await fetchTableFields(tableName);
 
-        const createdTable = await api.createTable({
-          database_id: createdDb.id,
-          name: tableName,
-          description: tableDescription
-        });
-
-        for (const field of tableFields) {
-          await api.createField({
-            table_id: createdTable.id,
-            name: field.fieldName,
-            type: field.dataType,
-            description: field.description || `Field ${field.fieldName} in table ${tableName}`,
-            nullable: field.isNullable === 'YES',
-            is_primary_key: field.isPrimaryKey === 'YES',
-            is_foreign_key: field.isForeignKey === 'YES',
-            default_value: field.defaultValue
+          const createdTable = await api.createTable({
+            database_id: createdDb.id,
+            name: tableName,
+            description: tableDescription
           });
-        }
 
-        importedCount++;
-        toast.success(`Imported table: ${tableName} (${importedCount}/${totalTables})`);
+          for (const field of tableFields) {
+            await api.createField({
+              table_id: createdTable.id,
+              name: field.fieldName,
+              type: field.dataType,
+              description: field.description || `Field ${field.fieldName} in table ${tableName}`,
+              nullable: field.isNullable === 'YES',
+              is_primary_key: field.isPrimaryKey === 'YES',
+              is_foreign_key: field.isForeignKey === 'YES',
+              default_value: field.defaultValue
+            });
+          }
+
+          importedCount++;
+          toast.success(`Imported table: ${tableName} (${importedCount}/${totalTables})`);
+          
+          // Update progress in history
+          const progressItem = createHistoryItem(
+            config,
+            'in_progress',
+            totalTables,
+            importedCount,
+            failedTables,
+            undefined,
+            undefined
+          );
+          progressItem.id = currentHistoryId;
+          saveConnectionHistory(progressItem);
+          
+        } catch (error) {
+          console.error(`Failed to import table ${tableName}:`, error);
+          failedTables.push(tableName);
+          toast.error(`Failed to import table: ${tableName}`);
+        }
       }
 
-      toast.success(`Successfully imported ${importedCount} tables to data dictionary`);
+      // Final history update
+      const finalStatus = failedTables.length === 0 ? 'success' : 
+                         importedCount === 0 ? 'failed' : 'partial';
+      
+      const finalItem = createHistoryItem(
+        config,
+        finalStatus,
+        totalTables,
+        importedCount,
+        failedTables,
+        failedTables.length > 0 ? `${failedTables.length} tables failed to import` : undefined,
+        Date.now() - importStartTime
+      );
+      finalItem.id = currentHistoryId;
+      saveConnectionHistory(finalItem);
+
+      if (importedCount > 0) {
+        toast.success(`Successfully imported ${importedCount} tables to data dictionary`);
+      }
+      
+      if (failedTables.length > 0) {
+        toast.error(`${failedTables.length} tables failed to import`);
+      }
 
       setConfig({
         server: '',
@@ -296,9 +380,27 @@ export default function DatabaseImport() {
       setTableFields([]);
       setSelectedTables([]);
       setSelectedTable(null);
-      setStep('info');
+      setCurrentHistoryId(null);
+      setImportStartTime(null);
+      setStep('history');
     } catch (error) {
       console.error('Failed to import:', error);
+      
+      // Update history with failure
+      if (currentHistoryId && importStartTime) {
+        const failedItem = createHistoryItem(
+          config,
+          'failed',
+          selectedTables.length,
+          0,
+          [],
+          error instanceof Error ? error.message : 'Import failed',
+          Date.now() - importStartTime
+        );
+        failedItem.id = currentHistoryId;
+        saveConnectionHistory(failedItem);
+      }
+      
       toast.error('Failed to import database');
     } finally {
       setLoading(false);
@@ -313,8 +415,21 @@ export default function DatabaseImport() {
     setStep('credentials');
   };
 
-  const handleClearState = () => {
-    localStorage.removeItem(IMPORT_STATE_KEY);
+  const handleReconnect = (historyConfig: any) => {
+    setConfig(historyConfig);
+    setStep('credentials');
+    toast.success('Configuration loaded from history');
+  };
+
+  const handleResume = (historyItem: any) => {
+    setConfig(historyItem.config);
+    // You could implement logic here to resume from where it left off
+    // For now, we'll just reconnect and let user select tables again
+    setStep('credentials');
+    toast.success('Resuming from previous session');
+  };
+
+  const handleNewConnection = () => {
     setConfig({
       server: '',
       database: '',
@@ -332,8 +447,53 @@ export default function DatabaseImport() {
     setTableFields([]);
     setSelectedTables([]);
     setSelectedTable(null);
+    setCurrentHistoryId(null);
+    setImportStartTime(null);
     setStep('info');
-    toast.success('Import session cleared');
+  };
+
+  const renderStepContent = () => {
+    switch (step) {
+      case 'history':
+        return (
+          <div className="space-y-6">
+            <ConnectionHistory
+              onReconnect={handleReconnect}
+              onResume={handleResume}
+              sources={sources}
+            />
+            <div className="flex justify-center">
+              <button
+                onClick={handleNewConnection}
+                className="bg-[#003B7E] text-white px-6 py-2 rounded-lg hover:bg-[#002c5f] transition-colors"
+              >
+                New Connection
+              </button>
+            </div>
+          </div>
+        );
+      case 'info':
+        return (
+          <DatabaseInfoForm
+            config={config}
+            sources={sources}
+            onConfigChange={setConfig}
+            onNext={handleNext}
+          />
+        );
+      case 'credentials':
+        return (
+          <DatabaseCredentialsForm
+            config={config}
+            onConfigChange={setConfig}
+            onBack={() => setStep('info')}
+            onConnect={handleConnect}
+            loading={loading}
+          />
+        );
+      default:
+        return null;
+    }
   };
 
   return (
@@ -347,12 +507,12 @@ export default function DatabaseImport() {
           </Link>
           <h1 className="text-2xl font-bold">Database Import</h1>
         </div>
-        {(previewData || config.source_id) && (
+        {step !== 'history' && (
           <button
-            onClick={handleClearState}
-            className="text-red-600 hover:text-red-800 text-sm px-3 py-1 border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
+            onClick={() => setStep('history')}
+            className="text-[#003B7E] hover:text-[#002c5f] text-sm px-3 py-1 border border-[#003B7E] rounded-lg hover:bg-blue-50 transition-colors"
           >
-            Clear Session
+            View History
           </button>
         )}
       </div>
@@ -376,34 +536,25 @@ export default function DatabaseImport() {
 
       <div className="grid grid-cols-12 gap-6">
         {/* Connection Panel */}
-        <div className="col-span-4 bg-white rounded-lg shadow-md p-6">
+        <div className={`${step === 'history' ? 'col-span-12' : 'col-span-4'} bg-white rounded-lg shadow-md p-6`}>
           <h2 className="text-lg font-semibold mb-4 flex items-center">
             <Database className="h-5 w-5 mr-2" />
-            {step === 'info' ? 'Database Information' : 'Connection Details'}
+            {step === 'history' ? 'Connection History' : 
+             step === 'info' ? 'Database Information' : 'Connection Details'}
           </h2>
           
-          <div className="space-y-4">
-            {step === 'info' ? (
-              <DatabaseInfoForm
-                config={config}
-                sources={sources}
-                onConfigChange={setConfig}
-                onNext={handleNext}
-              />
-            ) : (
-              <DatabaseCredentialsForm
-                config={config}
-                onConfigChange={setConfig}
-                onBack={() => setStep('info')}
-                onConnect={handleConnect}
-                loading={loading}
-              />
-            )}
-          </div>
+          {step === 'history' ? (
+            renderStepContent()
+          ) : (
+            <div className="space-y-4">
+              {renderStepContent()}
+            </div>
+          )}
         </div>
 
         {/* Schema Preview */}
-        <div className="col-span-8 bg-white rounded-lg shadow-md p-6">
+        {step !== 'history' && (
+          <div className="col-span-8 bg-white rounded-lg shadow-md p-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold">Schema Preview</h2>
           </div>
@@ -422,6 +573,7 @@ export default function DatabaseImport() {
             onImport={handleImport}
           />
         </div>
+        )}
       </div>
     </div>
   );
