@@ -29,7 +29,7 @@ class Table(Base):
     database_id = Column(UNIQUEIDENTIFIER, ForeignKey("databases.id"))
     category_id = Column(UNIQUEIDENTIFIER, ForeignKey("categories.id"))
     name = Column(NVARCHAR(255), nullable=False)
-    description = Column(NVARCHAR(1000))
+    description = Column(NVARCHAR(2000))  # Increased from 1000 to 2000 characters
 
 class Field(Base):
     __tablename__ = "fields"

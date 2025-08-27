@@ -403,7 +403,9 @@ export default function DatabaseImport() {
               createdTable = await api.createTable({
                 database_id: createdDb.id,
                 name: tableName,
-                description: tableDescription || `Table ${tableName} containing business data and operational information for system processes.`
+                description: tableDescription && tableDescription.length > 1800 
+                  ? tableDescription.substring(0, 1800).split('.').slice(0, -1).join('.') + '.'
+                  : tableDescription || `Table ${tableName} containing business data and operational information for system processes.`
               });
             } catch (tableError) {
               console.error(`Failed to create table ${tableName}:`, tableError);

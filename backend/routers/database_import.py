@@ -150,32 +150,38 @@ Fields:
 
 {field_info}
 
-IMPORTANT: Provide a detailed, comprehensive business description (3-4 sentences) that explains:
+IMPORTANT: Provide a concise but comprehensive business description (2-3 sentences, max 300 words) that explains:
 
 1. What specific business entity or process this table represents
 2. What type of business data is stored and why it's important
 3. How this table is used in day-to-day business operations
+
 4. What business relationships or workflows it supports
-5. Any compliance, audit, or regulatory aspects if applicable
 
-Write in clear business language that both technical and non-technical stakeholders can understand. Focus on business value and practical usage rather than technical implementation."""
-
+Write in clear, concise business language. Keep the description under 300 words to ensure it fits in the database."""
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are a senior database analyst and business systems expert with 15+ years of experience in banking, ERP, CRM, and enterprise systems. You excel at translating technical database structures into clear business language that helps stakeholders understand the practical purpose and business value of data assets."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=400,
+            max_tokens=200,  # Reduced to ensure shorter descriptions
             temperature=0.3
         )
 
         description = response.choices[0].message.content.strip()
+        
+        # Ensure description doesn't exceed database limit (1800 chars to be safe)
+        if len(description) > 1800:
+            description = description[:1800].rsplit('.', 1)[0] + '.'
+        
         logger.info(f"Generated context-aware description for table {table_name}: {description}")
         return description
 
     except Exception as e:
         logger.error(f"Error generating table description with context: {str(e)}")
+        # Return a shorter fallback description
+        return f"Database table storing {table_name.replace('_', ' ').lower()} data for business operations and reporting."
 
 def generate_field_descriptions(table_name: str, fields: List[TableField]) -> List[TableField]:
     """Generate descriptions for fields using OpenAI."""
@@ -265,33 +271,28 @@ Fields:
 
 {fields_context}
 
-CRITICAL REQUIREMENTS: For each field, provide a comprehensive business description (2-3 sentences) that explains:
+CRITICAL REQUIREMENTS: For each field, provide a concise business description (1-2 sentences, max 150 words per field) that explains:
 
 1. WHAT: What specific business data this field contains (be very detailed about the content)
 2. WHY: Why this data is important for business operations
 3. HOW: How this field is used in real business processes and workflows
-4. RULES: What business rules, constraints, or validation apply
-5. EXAMPLES: Provide realistic examples of typical values when helpful
-6. RELATIONSHIPS: How this field relates to other business data or processes
 
-Focus on business value and practical usage. Avoid generic technical descriptions.
 
-Examples of excellent descriptions:
-- ACCOUNT_NUMBER: "Unique identifier for customer bank accounts, typically 10-12 digits, used across all banking transactions, statements, and customer communications. This number is referenced in all account-related operations and serves as the primary link between customers and their financial products."
-- TRANSACTION_AMOUNT: "Monetary value of the financial transaction in the account's base currency, stored with precision to handle cents/pence. This amount is used for balance calculations, reporting, regulatory compliance, and customer statements. Positive values indicate credits/deposits, negative values indicate debits/withdrawals."
-- CUSTOMER_STATUS: "Current operational status of the customer relationship (Active, Suspended, Closed, Dormant) that determines what banking services and transactions are available. This status drives business rules for account access, fee calculations, and regulatory reporting requirements."
+
+Focus on business value and practical usage. Keep descriptions concise but informative.
+
 Format your response as:
 fieldName: description
 
-Make each description comprehensive and business-focused (2-3 sentences each)."""
+Make each description concise and business-focused (1-2 sentences each, under 150 words)."""
 
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a world-class database analyst and business systems expert with 20+ years of experience across banking, ERP, CRM, and enterprise systems. You excel at creating detailed, business-focused field descriptions that help stakeholders understand exactly what data is stored, why it matters, and how it's used in real business operations. Your descriptions are comprehensive, practical, and valuable for both technical and business users."},
+                {"role": "system", "content": "You are a senior database analyst and business systems expert with 15+ years of experience across banking, ERP, CRM, and enterprise systems. You excel at creating concise, business-focused field descriptions that help stakeholders understand what data is stored, why it matters, and how it's used in business operations. Keep descriptions under 150 words per field."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=4000,
+            max_tokens=2000,  # Reduced to ensure shorter descriptions
             temperature=0.2
         )
 
@@ -304,7 +305,11 @@ Make each description comprehensive and business-focused (2-3 sentences each).""
         for line in description_lines:
             if ':' in line:
                 field_name, description = line.split(':', 1)
-                field_descriptions[field_name.strip()] = description.strip()
+                desc = description.strip()
+                # Ensure field description doesn't exceed database limit (900 chars to be safe)
+                if len(desc) > 900:
+                    desc = desc[:900].rsplit('.', 1)[0] + '.'
+                field_descriptions[field_name.strip()] = desc
         
         # Update field descriptions
         for field in fields:
