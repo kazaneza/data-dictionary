@@ -141,7 +141,7 @@ def generate_table_description_with_context(table_name: str, fields: List[TableF
             for field in fields
         ])
 
-        prompt = f"""You are a senior database analyst with expertise in business systems. Analyze this database table and provide a comprehensive business description.
+        prompt = f"""You are a database analyst. Provide a SHORT, clear description of what this table stores.
 
 System Context: {source_context}
 
@@ -150,38 +150,33 @@ Fields:
 
 {field_info}
 
-IMPORTANT: Provide a concise but comprehensive business description (2-3 sentences, max 300 words) that explains:
+IMPORTANT: Write ONLY 1-2 short sentences (max 150 characters total) explaining:
 
-1. What specific business entity or process this table represents
-2. What type of business data is stored and why it's important
-3. How this table is used in day-to-day business operations
+1. What data this table stores
+2. Its main business purpose
 
-4. What business relationships or workflows it supports
-
-Write in clear, concise business language. Keep the description under 300 words to ensure it fits in the database."""
+Keep it simple and direct. Example: "Stores customer account transactions and balances for daily banking operations."
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a senior database analyst and business systems expert with 15+ years of experience in banking, ERP, CRM, and enterprise systems. You excel at translating technical database structures into clear business language that helps stakeholders understand the practical purpose and business value of data assets."},
+                {"role": "system", "content": "You are a database analyst. Write very short, clear descriptions. Maximum 150 characters. Be direct and simple."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=200,  # Reduced to ensure shorter descriptions
-            temperature=0.3
+            max_tokens=50,  # Much shorter responses
+            temperature=0.1
         )
 
         description = response.choices[0].message.content.strip()
         
-        # Ensure description doesn't exceed database limit (1800 chars to be safe)
-        if len(description) > 1800:
-            description = description[:1800].rsplit('.', 1)[0] + '.'
+        # Ensure description doesn't exceed database limit (500 chars to be very safe)
+        if len(description) > 500:
+            description = description[:500].rsplit('.', 1)[0] + '.'
         
         logger.info(f"Generated context-aware description for table {table_name}: {description}")
         return description
 
     except Exception as e:
         logger.error(f"Error generating table description with context: {str(e)}")
-        # Return a shorter fallback description
-        return f"Database table storing {table_name.replace('_', ' ').lower()} data for business operations and reporting."
 
 def generate_field_descriptions(table_name: str, fields: List[TableField]) -> List[TableField]:
     """Generate descriptions for fields using OpenAI."""
