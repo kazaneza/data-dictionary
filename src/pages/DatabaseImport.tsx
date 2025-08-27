@@ -100,6 +100,7 @@ export default function DatabaseImport() {
     // Cancel any existing connection
     if (connectionController) {
       connectionController.abort();
+      setConnectionController(null);
     }
     
     // Create new abort controller
@@ -160,13 +161,27 @@ export default function DatabaseImport() {
 
     try {
       setLoading(true);
+      
+      // Show immediate feedback
+      toast.loading('Connecting to database...', { id: 'connection' });
+      
       const response = await axios.post(`${API_URL}/api/database/connect`, config, {
         signal: controller.signal,
-        timeout: 60000 // 60 second timeout
+        timeout: 120000 // 2 minute timeout for large databases
       });
+      
+      toast.dismiss('connection');
+      
       setPreviewData(response.data);
-      // Auto-select all tables by default, but user can change this
-      setSelectedTables(response.data.tables || []);
+      
+      // For large datasets, don't auto-select all tables
+      const tables = response.data.tables || [];
+      if (tables.length <= 100) {
+        setSelectedTables(tables);
+      } else {
+        setSelectedTables([]);
+        toast.info(`Found ${tables.length} tables. Please select the ones you want to import.`);
+      }
       
       // Update history with successful connection
       const successItem = createHistoryItem(
@@ -183,8 +198,11 @@ export default function DatabaseImport() {
       
       toast.success('Successfully connected to database');
     } catch (error: any) {
+      toast.dismiss('connection');
+      
       // Don't show error if request was cancelled
       if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+        toast.info('Connection cancelled');
         return;
       }
       
@@ -227,17 +245,37 @@ export default function DatabaseImport() {
       return;
     }
 
+    // Cancel any existing table loading
+    if (connectionController) {
+      connectionController.abort();
+    }
+    
+    const controller = new AbortController();
+    setConnectionController(controller);
+
     try {
       setSelectedTable(tableName);
       setLoading(true);
+      
+      toast.loading(`Loading schema for ${tableName}...`, { id: 'table-load' });
 
-      const tableData = await fetchTableFields(tableName);
+      const tableData = await fetchTableFields(tableName, controller.signal);
       setTableFields(tableData.fields);
+      
+      toast.dismiss('table-load');
+      toast.success(`Loaded schema for ${tableName}`);
     } catch (error) {
+      toast.dismiss('table-load');
+      
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      
       console.error('Failed to fetch table schema:', error);
       toast.error('Failed to fetch table schema');
     } finally {
       setLoading(false);
+      setConnectionController(null);
     }
   };
 
@@ -259,13 +297,14 @@ export default function DatabaseImport() {
     }
   };
 
-  const fetchTableFields = async (tableName: string): Promise<TableData> => {
+  const fetchTableFields = async (tableName: string, signal?: AbortSignal): Promise<TableData> => {
     try {
       const schemaResponse = await axios.post(`${API_URL}/api/database/schema`, {
         ...config,
         tableName
       }, {
-        timeout: 30000 // 30 second timeout
+        timeout: 60000, // 60 second timeout
+        signal
       });
 
       const tableDescription = schemaResponse.data.table_description;
@@ -274,7 +313,8 @@ export default function DatabaseImport() {
         tableName,
         fields: schemaResponse.data.fields
       }, {
-        timeout: 30000 // 30 second timeout
+        timeout: 60000, // 60 second timeout
+        signal
       });
 
       return {
@@ -300,6 +340,8 @@ export default function DatabaseImport() {
 
     try {
       setLoading(true);
+      
+      toast.loading('Starting import process...', { id: 'import' });
       
       // Update history to show import in progress
       const inProgressItem = createHistoryItem(
@@ -327,9 +369,20 @@ export default function DatabaseImport() {
       let importedCount = 0;
       const failedTables: string[] = [];
       const totalTables = selectedTables.length;
+      
+      toast.dismiss('import');
 
-      for (const tableName of selectedTables) {
+      // Process tables in batches to avoid overwhelming the system
+      const batchSize = 5;
+      for (let i = 0; i < selectedTables.length; i += batchSize) {
+        const batch = selectedTables.slice(i, i + batchSize);
+        
+        await Promise.allSettled(batch.map(async (tableName) => {
         try {
+          toast.loading(`Importing ${tableName}... (${importedCount + 1}/${totalTables})`, { 
+            id: `import-${tableName}` 
+          });
+          
           const { fields: tableFields, tableDescription } = await fetchTableFields(tableName);
 
           const createdTable = await api.createTable({
@@ -352,7 +405,11 @@ export default function DatabaseImport() {
           }
 
           importedCount++;
-          toast.success(`Imported table: ${tableName} (${importedCount}/${totalTables})`);
+          
+          toast.dismiss(`import-${tableName}`);
+          toast.success(`Imported: ${tableName} (${importedCount}/${totalTables})`, {
+            duration: 2000
+          });
           
           // Update progress in history
           const progressItem = createHistoryItem(
@@ -368,9 +425,16 @@ export default function DatabaseImport() {
           saveConnectionHistory(progressItem);
           
         } catch (error) {
+          toast.dismiss(`import-${tableName}`);
           console.error(`Failed to import table ${tableName}:`, error);
           failedTables.push(tableName);
-          toast.error(`Failed to import table: ${tableName}`);
+          toast.error(`Failed: ${tableName}`, { duration: 3000 });
+        }
+        }));
+        
+        // Small delay between batches to prevent overwhelming
+        if (i + batchSize < selectedTables.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
 
