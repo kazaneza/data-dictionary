@@ -73,6 +73,7 @@ export default function DatabaseImport() {
   // Track import progress for history
   const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
   const [importStartTime, setImportStartTime] = useState<number | null>(null);
+  const [connectionController, setConnectionController] = useState<AbortController | null>(null);
 
   useEffect(() => {
     const fetchSources = async () => {
@@ -86,9 +87,25 @@ export default function DatabaseImport() {
     };
 
     fetchSources();
+    
+    // Cleanup on unmount
+    return () => {
+      if (connectionController) {
+        connectionController.abort();
+      }
+    };
   }, []);
 
   const handleConnect = async () => {
+    // Cancel any existing connection
+    if (connectionController) {
+      connectionController.abort();
+    }
+    
+    // Create new abort controller
+    const controller = new AbortController();
+    setConnectionController(controller);
+    
     const startTime = Date.now();
     setImportStartTime(startTime);
     
@@ -119,6 +136,7 @@ export default function DatabaseImport() {
       );
       failedItem.id = historyItem.id;
       saveConnectionHistory(failedItem);
+      setConnectionController(null);
       return;
     }
 
@@ -136,12 +154,16 @@ export default function DatabaseImport() {
       );
       failedItem.id = historyItem.id;
       saveConnectionHistory(failedItem);
+      setConnectionController(null);
       return;
     }
 
     try {
       setLoading(true);
-      const response = await axios.post(`${API_URL}/api/database/connect`, config);
+      const response = await axios.post(`${API_URL}/api/database/connect`, config, {
+        signal: controller.signal,
+        timeout: 60000 // 60 second timeout
+      });
       setPreviewData(response.data);
       // Auto-select all tables by default, but user can change this
       setSelectedTables(response.data.tables || []);
@@ -160,7 +182,12 @@ export default function DatabaseImport() {
       saveConnectionHistory(successItem);
       
       toast.success('Successfully connected to database');
-    } catch (error) {
+    } catch (error: any) {
+      // Don't show error if request was cancelled
+      if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+        return;
+      }
+      
       console.error('Failed to connect:', error);
       
       // Update history with failure
@@ -170,15 +197,17 @@ export default function DatabaseImport() {
         0,
         0,
         [],
-        error instanceof Error ? error.message : 'Connection failed',
+        error.response?.data?.detail || error.message || 'Connection failed',
         Date.now() - startTime
       );
       failedItem.id = historyItem.id;
       saveConnectionHistory(failedItem);
       
-      toast.error('Failed to connect to database');
+      const errorMessage = error.response?.data?.detail || error.message || 'Connection failed';
+      toast.error(`Failed to connect: ${errorMessage}`);
     } finally {
       setLoading(false);
+      setConnectionController(null);
     }
   };
 
@@ -218,6 +247,8 @@ export default function DatabaseImport() {
       const response = await axios.post(`${API_URL}/api/database/describe`, {
         tableName,
         fields
+      }, {
+        timeout: 30000 // 30 second timeout
       });
       setTableFields(response.data.fields);
     } catch (error) {
@@ -233,6 +264,8 @@ export default function DatabaseImport() {
       const schemaResponse = await axios.post(`${API_URL}/api/database/schema`, {
         ...config,
         tableName
+      }, {
+        timeout: 30000 // 30 second timeout
       });
 
       const tableDescription = schemaResponse.data.table_description;
@@ -240,6 +273,8 @@ export default function DatabaseImport() {
       const fieldsResponse = await axios.post(`${API_URL}/api/database/describe`, {
         tableName,
         fields: schemaResponse.data.fields
+      }, {
+        timeout: 30000 // 30 second timeout
       });
 
       return {
@@ -416,12 +451,24 @@ export default function DatabaseImport() {
   };
 
   const handleReconnect = (historyConfig: any) => {
+    // Cancel any existing connection
+    if (connectionController) {
+      connectionController.abort();
+      setConnectionController(null);
+    }
+    
     setConfig(historyConfig);
     setStep('credentials');
     toast.success('Configuration loaded from history');
   };
 
   const handleResume = (historyItem: any) => {
+    // Cancel any existing connection
+    if (connectionController) {
+      connectionController.abort();
+      setConnectionController(null);
+    }
+    
     setConfig(historyItem.config);
     // You could implement logic here to resume from where it left off
     // For now, we'll just reconnect and let user select tables again
@@ -430,6 +477,12 @@ export default function DatabaseImport() {
   };
 
   const handleNewConnection = () => {
+    // Cancel any existing connection
+    if (connectionController) {
+      connectionController.abort();
+      setConnectionController(null);
+    }
+    
     setConfig({
       server: '',
       database: '',

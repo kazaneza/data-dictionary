@@ -155,7 +155,10 @@ export default function DatabaseCredentialsForm({
           className="flex-1 bg-[#003B7E] text-white px-4 py-2 rounded-lg hover:bg-[#002c5f] transition-colors disabled:opacity-50 flex items-center justify-center"
         >
           {loading ? (
-            <RefreshCw className="h-5 w-5 animate-spin" />
+            <>
+              <RefreshCw className="h-5 w-5 animate-spin mr-2" />
+              <span>Connecting...</span>
+            </>
           ) : (
             'Connect'
           )}

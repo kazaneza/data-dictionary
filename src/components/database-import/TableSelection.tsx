@@ -33,17 +33,29 @@ export default function TableSelection({
 }: TableSelectionProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Debounce search term to avoid excessive filtering
-  const debouncedSearchTerm = useDebounce(searchTerm, 300);
+  // Use immediate search for better responsiveness
+  const debouncedSearchTerm = useDebounce(searchTerm, 150);
 
   const filteredTables = useMemo(() => {
-    if (!debouncedSearchTerm) return tables;
+    if (!debouncedSearchTerm.trim()) return tables;
     
-    // Use more efficient filtering for large datasets
     const searchLower = debouncedSearchTerm.toLowerCase();
-    return tables.filter(table => 
-      table.toLowerCase().includes(searchLower)
-    );
+    
+    // Optimize filtering for large datasets
+    if (tables.length > 1000) {
+      // For very large datasets, use a more efficient approach
+      const results = [];
+      for (let i = 0; i < tables.length && results.length < 500; i++) {
+        if (tables[i].toLowerCase().includes(searchLower)) {
+          results.push(tables[i]);
+        }
+      }
+      return results;
+    } else {
+      return tables.filter(table => 
+        table.toLowerCase().includes(searchLower)
+      );
+    }
   }, [tables, debouncedSearchTerm]);
 
   // Memoize selection state calculations
@@ -84,9 +96,15 @@ export default function TableSelection({
     }
   }, [selectedTables, onTableSelectionChange]);
 
-  // Memoize search handler to prevent unnecessary re-renders
+  // Optimize search handler
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchTerm(e.target.value);
+    const value = e.target.value;
+    setSearchTerm(value);
+    
+    // Clear search immediately if empty to prevent hanging
+    if (!value.trim()) {
+      setSearchTerm('');
+    }
   }, []);
 
   if (loading) {
@@ -134,7 +152,16 @@ export default function TableSelection({
             onChange={handleSearchChange}
             placeholder="Search tables..."
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003B7E]/50"
+            autoComplete="off"
           />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              ×
+            </button>
+          )}
         </div>
         <button
           onClick={handleSelectAll}
@@ -153,10 +180,10 @@ export default function TableSelection({
       </div>
 
       {/* Table List */}
-      <div className="max-h-80 overflow-y-auto border border-gray-200 rounded-lg">
+      <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
         {filteredTables.length === 0 ? (
           <div className="p-4 text-center text-gray-500">
-            No tables match your search
+            {searchTerm ? 'No tables match your search' : 'No tables available'}
           </div>
         ) : (
           <div className="divide-y divide-gray-200">
