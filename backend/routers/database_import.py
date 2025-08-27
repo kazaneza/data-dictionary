@@ -141,7 +141,7 @@ def generate_table_description_with_context(table_name: str, fields: List[TableF
             for field in fields
         ])
 
-        prompt = f"""You are analyzing a database table from a business system.
+        prompt = f"""You are a senior database analyst with expertise in business systems. Analyze this database table and provide a comprehensive business description.
 
 System Context: {source_context}
 
@@ -150,23 +150,23 @@ Fields:
 
 {field_info}
 
-Based on the system context, table name, and field structure, provide a detailed business description of what this table stores and its purpose in the system.
+IMPORTANT: Provide a detailed, comprehensive business description (3-4 sentences) that explains:
 
-Consider:
-- What business process or entity does this represent in this specific system type?
-- What kind of data would be stored here?
-- How might this table be used in business operations?
-- What relationships might it have with other system components?
+1. What specific business entity or process this table represents
+2. What type of business data is stored and why it's important
+3. How this table is used in day-to-day business operations
+4. What business relationships or workflows it supports
+5. Any compliance, audit, or regulatory aspects if applicable
 
-Provide a clear, informative description (2-3 sentences) that would help a business user understand the table's purpose."""
+Write in clear business language that both technical and non-technical stakeholders can understand. Focus on business value and practical usage rather than technical implementation."""
 
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a senior database analyst with expertise in various business systems. Use the provided system context to understand the business domain and provide clear, business-focused descriptions that help users understand the practical purpose of database tables and fields."},
+                {"role": "system", "content": "You are a senior database analyst and business systems expert with 15+ years of experience in banking, ERP, CRM, and enterprise systems. You excel at translating technical database structures into clear business language that helps stakeholders understand the practical purpose and business value of data assets."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=200,
+            max_tokens=400,
             temperature=0.3
         )
 
@@ -176,7 +176,6 @@ Provide a clear, informative description (2-3 sentences) that would help a busin
 
     except Exception as e:
         logger.error(f"Error generating table description with context: {str(e)}")
-        return f"Database table for {table_name.replace('_', ' ').title()} data storage and management"
 
 def generate_field_descriptions(table_name: str, fields: List[TableField]) -> List[TableField]:
     """Generate descriptions for fields using OpenAI."""
@@ -257,7 +256,7 @@ def generate_field_descriptions_with_context(table_name: str, fields: List[Table
             for field in fields
         ])
 
-        prompt = f"""You are a senior database analyst with deep expertise in business systems. Analyze this table and provide detailed, business-focused descriptions for each field.
+        prompt = f"""You are a senior database analyst and business systems expert. Analyze this table and provide comprehensive, business-focused descriptions for each field.
 
 System Context: {source_context}
 
@@ -266,32 +265,33 @@ Fields:
 
 {fields_context}
 
-IMPORTANT: For each field, provide a detailed business description that explains:
-1. What specific data this field stores (be very specific about the content)
-2. How this field is used in real business operations
-3. What business rules or constraints apply
-4. Any relationships to other data or processes
-5. Examples of typical values when relevant
+CRITICAL REQUIREMENTS: For each field, provide a comprehensive business description (2-3 sentences) that explains:
 
-Focus on practical business understanding, not technical database concepts.
+1. WHAT: What specific business data this field contains (be very detailed about the content)
+2. WHY: Why this data is important for business operations
+3. HOW: How this field is used in real business processes and workflows
+4. RULES: What business rules, constraints, or validation apply
+5. EXAMPLES: Provide realistic examples of typical values when helpful
+6. RELATIONSHIPS: How this field relates to other business data or processes
 
-Examples of good descriptions:
-- ACCOUNT_NUMBER: "Unique identifier for customer bank accounts, typically 10-12 digits, used across all banking transactions and customer communications"
-- TRANSACTION_AMOUNT: "Monetary value of the financial transaction in the account's base currency, stored as decimal with 2 decimal places for cents/pence"
-- CUSTOMER_STATUS: "Current status of the customer relationship (Active, Suspended, Closed), determines what services and transactions are available"
+Focus on business value and practical usage. Avoid generic technical descriptions.
 
+Examples of excellent descriptions:
+- ACCOUNT_NUMBER: "Unique identifier for customer bank accounts, typically 10-12 digits, used across all banking transactions, statements, and customer communications. This number is referenced in all account-related operations and serves as the primary link between customers and their financial products."
+- TRANSACTION_AMOUNT: "Monetary value of the financial transaction in the account's base currency, stored with precision to handle cents/pence. This amount is used for balance calculations, reporting, regulatory compliance, and customer statements. Positive values indicate credits/deposits, negative values indicate debits/withdrawals."
+- CUSTOMER_STATUS: "Current operational status of the customer relationship (Active, Suspended, Closed, Dormant) that determines what banking services and transactions are available. This status drives business rules for account access, fee calculations, and regulatory reporting requirements."
 Format your response as:
 fieldName: description
 
-Make each description informative and specific (2-3 sentences each)."""
+Make each description comprehensive and business-focused (2-3 sentences each)."""
 
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a senior database analyst and business systems expert with 15+ years of experience. You understand how database fields are used in real business operations across banking, ERP, CRM, and other enterprise systems. Provide detailed, practical descriptions that help business users understand exactly what each field contains and how it's used. Avoid generic technical descriptions - focus on business value and practical usage."},
+                {"role": "system", "content": "You are a world-class database analyst and business systems expert with 20+ years of experience across banking, ERP, CRM, and enterprise systems. You excel at creating detailed, business-focused field descriptions that help stakeholders understand exactly what data is stored, why it matters, and how it's used in real business operations. Your descriptions are comprehensive, practical, and valuable for both technical and business users."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=2500,
+            max_tokens=4000,
             temperature=0.2
         )
 
@@ -328,28 +328,27 @@ def generate_fallback_description(field_name: str, data_type: str, table_name: s
     
     # Common field patterns with better descriptions
     if 'id' in field_lower and ('customer' in field_lower or 'client' in field_lower):
-        return f"Unique identifier linking to customer records, used for customer relationship tracking and data integrity"
+        return f"Unique identifier linking to customer records, used for customer relationship tracking, data integrity, and cross-system references. This ID enables efficient lookups and maintains referential integrity across all customer-related business processes."
     elif 'id' in field_lower and field_lower.endswith('_id'):
         entity = field_name[:-3].replace('_', ' ').title()
-        return f"Foreign key reference to {entity} records, establishing relational data integrity"
+        return f"Foreign key reference to {entity} records, establishing relational data integrity and enabling efficient joins. This identifier maintains business relationships and supports data consistency across the system's operational workflows."
     elif 'amount' in field_lower or 'balance' in field_lower:
-        return f"Monetary value stored as {data_type}, representing financial amounts in the system's base currency"
+        return f"Monetary value stored as {data_type}, representing financial amounts in the system's base currency. This field is critical for financial calculations, reporting, compliance, and audit trails, with precision maintained for accurate accounting."
     elif 'date' in field_lower or 'time' in field_lower:
-        return f"Timestamp field ({data_type}) recording when specific business events occurred for audit and reporting purposes"
+        return f"Timestamp field ({data_type}) recording when specific business events occurred, essential for audit trails, compliance reporting, and business analytics. This temporal data supports regulatory requirements and operational tracking."
     elif 'status' in field_lower or 'state' in field_lower:
-        return f"Status indicator controlling business logic and workflow states for {table_name.replace('_', ' ').lower()} records"
+        return f"Status indicator controlling business logic and workflow states for {table_name.replace('_', ' ').lower()} records. This field drives automated processes, user permissions, and business rule execution throughout the system."
     elif 'code' in field_lower:
-        return f"Standardized code value ({data_type}) used for categorization and business rule processing"
+        return f"Standardized code value ({data_type}) used for categorization, business rule processing, and system integration. These codes ensure data consistency and enable efficient processing across different business functions."
     elif 'name' in field_lower or 'description' in field_lower:
-        return f"Descriptive text field ({data_type}) providing human-readable information for business users"
+        return f"Descriptive text field ({data_type}) providing human-readable information for business users, reports, and customer communications. This field enhances data usability and supports clear business documentation."
     elif 'account' in field_lower:
-        return f"Account reference ({data_type}) linking to financial account structures and transaction processing"
+        return f"Account reference ({data_type}) linking to financial account structures and transaction processing systems. This field enables account-based operations, balance tracking, and customer service functions."
     elif 'number' in field_lower:
-        return f"Numeric identifier or sequence ({data_type}) used for unique identification and business referencing"
+        return f"Numeric identifier or sequence ({data_type}) used for unique identification, business referencing, and system integration. This number supports efficient data retrieval and maintains business process continuity."
     else:
         # Generic but better fallback
         clean_name = field_name.replace('_', ' ').title()
-        return f"{clean_name} data field ({data_type}) storing business information for {table_name.replace('_', ' ').lower()} operations"
 
 @router.post("/connect")
 async def connect_database(config: DatabaseConfig):

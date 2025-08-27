@@ -356,15 +356,24 @@ export default function DatabaseImport() {
       inProgressItem.id = currentHistoryId;
       saveConnectionHistory(inProgressItem);
 
-      const createdDb = await api.createDatabase({
-        source_id: config.source_id,
-        name: config.database,
-        description: config.description,
-        type: config.type,
-        platform: config.platform,
-        location: config.location,
-        version: config.version
-      });
+      // Create database with error handling
+      let createdDb;
+      try {
+        createdDb = await api.createDatabase({
+          source_id: config.source_id,
+          name: config.database,
+          description: config.description,
+          type: config.type,
+          platform: config.platform,
+          location: config.location,
+          version: config.version
+        });
+        toast.success(`Database "${createdDb.name}" created successfully`);
+      } catch (error) {
+        console.error('Failed to create database:', error);
+        toast.error('Failed to create database. Please check if it already exists.');
+        throw error;
+      }
 
       let importedCount = 0;
       const failedTables: string[] = [];
@@ -373,68 +382,90 @@ export default function DatabaseImport() {
       toast.dismiss('import');
 
       // Process tables in batches to avoid overwhelming the system
-      const batchSize = 5;
+      const batchSize = 3; // Reduced batch size for better stability
       for (let i = 0; i < selectedTables.length; i += batchSize) {
         const batch = selectedTables.slice(i, i + batchSize);
         
         await Promise.allSettled(batch.map(async (tableName) => {
-        try {
-          toast.loading(`Importing ${tableName}... (${importedCount + 1}/${totalTables})`, { 
-            id: `import-${tableName}` 
-          });
-          
-          const { fields: tableFields, tableDescription } = await fetchTableFields(tableName);
-
-          const createdTable = await api.createTable({
-            database_id: createdDb.id,
-            name: tableName,
-            description: tableDescription
-          });
-
-          for (const field of tableFields) {
-            await api.createField({
-              table_id: createdTable.id,
-              name: field.fieldName,
-              type: field.dataType,
-              description: field.description || `Field ${field.fieldName} in table ${tableName}`,
-              nullable: field.isNullable === 'YES',
-              is_primary_key: field.isPrimaryKey === 'YES',
-              is_foreign_key: field.isForeignKey === 'YES',
-              default_value: field.defaultValue
+          try {
+            toast.loading(`Importing ${tableName}... (${importedCount + 1}/${totalTables})`, { 
+              id: `import-${tableName}` 
             });
-          }
+            
+            // Fetch table schema with timeout
+            const { fields: tableFields, tableDescription } = await Promise.race([
+              fetchTableFields(tableName),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Table schema fetch timeout')), 60000)
+              )
+            ]) as { fields: TableField[], tableDescription: string };
 
-          importedCount++;
-          
-          toast.dismiss(`import-${tableName}`);
-          toast.success(`Imported: ${tableName} (${importedCount}/${totalTables})`, {
-            duration: 2000
-          });
-          
-          // Update progress in history
-          const progressItem = createHistoryItem(
-            config,
-            'in_progress',
-            totalTables,
-            importedCount,
-            failedTables,
-            undefined,
-            undefined
-          );
-          progressItem.id = currentHistoryId;
-          saveConnectionHistory(progressItem);
-          
-        } catch (error) {
-          toast.dismiss(`import-${tableName}`);
-          console.error(`Failed to import table ${tableName}:`, error);
-          failedTables.push(tableName);
-          toast.error(`Failed: ${tableName}`, { duration: 3000 });
-        }
+            // Create table with error handling
+            let createdTable;
+            try {
+              createdTable = await api.createTable({
+                database_id: createdDb.id,
+                name: tableName,
+                description: tableDescription || `Table ${tableName} containing business data and operational information for system processes.`
+              });
+            } catch (tableError) {
+              console.error(`Failed to create table ${tableName}:`, tableError);
+              throw new Error(`Failed to create table: ${tableError instanceof Error ? tableError.message : 'Unknown error'}`);
+            }
+
+            // Create fields with error handling
+            let fieldCount = 0;
+            for (const field of tableFields) {
+              try {
+                await api.createField({
+                  table_id: createdTable.id,
+                  name: field.fieldName,
+                  type: field.dataType,
+                  description: field.description || `Business data field ${field.fieldName} storing ${field.dataType} information for operational and reporting purposes.`,
+                  nullable: field.isNullable === 'YES',
+                  is_primary_key: field.isPrimaryKey === 'YES',
+                  is_foreign_key: field.isForeignKey === 'YES',
+                  default_value: field.defaultValue
+                });
+                fieldCount++;
+              } catch (fieldError) {
+                console.error(`Failed to create field ${field.fieldName} in table ${tableName}:`, fieldError);
+                // Continue with other fields even if one fails
+              }
+            }
+
+            importedCount++;
+            
+            toast.dismiss(`import-${tableName}`);
+            toast.success(`✓ ${tableName} (${fieldCount} fields) - ${importedCount}/${totalTables}`, {
+              duration: 2000
+            });
+            
+            // Update progress in history
+            const progressItem = createHistoryItem(
+              config,
+              'in_progress',
+              totalTables,
+              importedCount,
+              failedTables,
+              undefined,
+              undefined
+            );
+            progressItem.id = currentHistoryId;
+            saveConnectionHistory(progressItem);
+            
+          } catch (error) {
+            toast.dismiss(`import-${tableName}`);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            console.error(`Failed to import table ${tableName}:`, errorMessage);
+            failedTables.push(tableName);
+            toast.error(`✗ ${tableName}: ${errorMessage}`, { duration: 4000 });
+          }
         }));
         
         // Small delay between batches to prevent overwhelming
         if (i + batchSize < selectedTables.length) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Increased delay
         }
       }
 
@@ -455,11 +486,15 @@ export default function DatabaseImport() {
       saveConnectionHistory(finalItem);
 
       if (importedCount > 0) {
-        toast.success(`Successfully imported ${importedCount} tables to data dictionary`);
+        toast.success(`🎉 Successfully imported ${importedCount}/${totalTables} tables to data dictionary!`, {
+          duration: 5000
+        });
       }
       
       if (failedTables.length > 0) {
-        toast.error(`${failedTables.length} tables failed to import`);
+        toast.error(`⚠️ ${failedTables.length}/${totalTables} tables failed to import. Check logs for details.`, {
+          duration: 5000
+        });
       }
 
       setConfig({
@@ -483,7 +518,8 @@ export default function DatabaseImport() {
       setImportStartTime(null);
       setStep('history');
     } catch (error) {
-      console.error('Failed to import:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      console.error('Failed to import:', errorMessage);
       
       // Update history with failure
       if (currentHistoryId && importStartTime) {
@@ -493,14 +529,14 @@ export default function DatabaseImport() {
           selectedTables.length,
           0,
           [],
-          error instanceof Error ? error.message : 'Import failed',
+          errorMessage,
           Date.now() - importStartTime
         );
         failedItem.id = currentHistoryId;
         saveConnectionHistory(failedItem);
       }
       
-      toast.error('Failed to import database');
+      toast.error(`Import failed: ${errorMessage}`, { duration: 5000 });
     } finally {
       setLoading(false);
     }
