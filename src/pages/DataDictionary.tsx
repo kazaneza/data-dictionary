@@ -110,7 +110,7 @@ function DataDictionary() {
 
         // Fetch databases
         setLoadingDatabases(true);
-        const databasesData = await api.fetchDatabases(1, 100);
+        const databasesData = await api.fetchDatabases(1, 500); // Increased limit to see more databases
         setDatabases(databasesData);
 
         // Attach databases to sources, each with totalTables = 0
@@ -127,6 +127,9 @@ function DataDictionary() {
         });
 
         setSourceSystems(updatedSources);
+        
+        // Clear cache to ensure fresh data
+        api.invalidateCache();
       } catch (error) {
         console.error('Error loading initial data:', error);
         setError('Failed to load data. Please try again later.');

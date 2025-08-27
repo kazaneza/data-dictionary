@@ -180,7 +180,10 @@ export default function DatabaseImport() {
         setSelectedTables(tables);
       } else {
         setSelectedTables([]);
-        toast.info(`Found ${tables.length} tables. Please select the ones you want to import.`);
+        toast(`Found ${tables.length} tables. Please select the ones you want to import.`, {
+          icon: 'ℹ️',
+          duration: 4000
+        });
       }
       
       // Update history with successful connection
@@ -303,7 +306,7 @@ export default function DatabaseImport() {
         ...config,
         tableName
       }, {
-        timeout: 60000, // 60 second timeout
+        timeout: 180000, // 3 minute timeout for large tables
         signal
       });
 
@@ -313,7 +316,7 @@ export default function DatabaseImport() {
         tableName,
         fields: schemaResponse.data.fields
       }, {
-        timeout: 60000, // 60 second timeout
+        timeout: 120000, // 2 minute timeout for field descriptions
         signal
       });
 
@@ -391,14 +394,9 @@ export default function DatabaseImport() {
             toast.loading(`Importing ${tableName}... (${importedCount + 1}/${totalTables})`, { 
               id: `import-${tableName}` 
             });
-            
-            // Fetch table schema with timeout
-            const { fields: tableFields, tableDescription } = await Promise.race([
-              fetchTableFields(tableName),
-              new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Table schema fetch timeout')), 60000)
-              )
-            ]) as { fields: TableField[], tableDescription: string };
+              // Fetch table schema
+              const { fields: tableFields, tableDescription } = await fetchTableFields(tableName);
+            const { fields: tableFields, tableDescription } = await fetchTableFields(tableName);
 
             // Create table with error handling
             let createdTable;
@@ -463,9 +461,7 @@ export default function DatabaseImport() {
           }
         }));
         
-        // Small delay between batches to prevent overwhelming
-        if (i + batchSize < selectedTables.length) {
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Increased delay
+          // No delay needed since we're processing one at a time
         }
       }
 
@@ -692,7 +688,7 @@ export default function DatabaseImport() {
         <div className={`${step === 'history' ? 'col-span-12' : 'col-span-4'} bg-white rounded-lg shadow-md p-6`}>
           <h2 className="text-lg font-semibold mb-4 flex items-center">
             <Database className="h-5 w-5 mr-2" />
-            {step === 'history' ? 'Connection History' : 
+        const batchSize = 1; // Process one table at a time for large tables
              step === 'info' ? 'Database Information' : 'Connection Details'}
           </h2>
           
