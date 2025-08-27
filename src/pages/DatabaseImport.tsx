@@ -394,8 +394,7 @@ export default function DatabaseImport() {
             toast.loading(`Importing ${tableName}... (${importedCount + 1}/${totalTables})`, { 
               id: `import-${tableName}` 
             });
-              // Fetch table schema
-              const { fields: tableFields, tableDescription } = await fetchTableFields(tableName);
+            // Fetch table schema
             const { fields: tableFields, tableDescription } = await fetchTableFields(tableName);
 
             // Create table with error handling
@@ -461,8 +460,7 @@ export default function DatabaseImport() {
           }
         }));
         
-          // No delay needed since we're processing one at a time
-        }
+        // No delay needed since we're processing one at a time
       }
 
       // Final history update
@@ -688,7 +686,7 @@ export default function DatabaseImport() {
         <div className={`${step === 'history' ? 'col-span-12' : 'col-span-4'} bg-white rounded-lg shadow-md p-6`}>
           <h2 className="text-lg font-semibold mb-4 flex items-center">
             <Database className="h-5 w-5 mr-2" />
-        const batchSize = 1; // Process one table at a time for large tables
+            {step === 'history' ? 'Connection History' : 
              step === 'info' ? 'Database Information' : 'Connection Details'}
           </h2>
           
@@ -704,24 +702,24 @@ export default function DatabaseImport() {
         {/* Schema Preview */}
         {step !== 'history' && (
           <div className="col-span-8 bg-white rounded-lg shadow-md p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold">Schema Preview</h2>
-          </div>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold">Schema Preview</h2>
+            </div>
 
-          <SchemaPreview
-            previewData={previewData}
-            config={config}
-            sources={sources}
-            selectedTable={selectedTable}
-            selectedTables={selectedTables}
-            tableFields={tableFields}
-            loading={loading}
-            loadingDescriptions={loadingDescriptions}
-            onTableSelect={handleTableSelect}
-            onTableSelectionChange={handleTableSelectionChange}
-            onImport={handleImport}
-          />
-        </div>
+            <SchemaPreview
+              previewData={previewData}
+              config={config}
+              sources={sources}
+              selectedTable={selectedTable}
+              selectedTables={selectedTables}
+              tableFields={tableFields}
+              loading={loading}
+              loadingDescriptions={loadingDescriptions}
+              onTableSelect={handleTableSelect}
+              onTableSelectionChange={handleTableSelectionChange}
+              onImport={handleImport}
+            />
+          </div>
         )}
       </div>
     </div>
