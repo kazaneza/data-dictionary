@@ -143,10 +143,12 @@ export default function TableSelection({
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredTables, setFilteredTables] = useState<string[]>(tables);
   const [isFiltering, setIsFiltering] = useState(false);
+  const [inputValue, setInputValue] = useState('');
   
   const workerRef = useRef<Worker | null>(null);
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const filterTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const selectedTablesSetRef = useRef(new Set(selectedTables));
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize worker
   useEffect(() => {
@@ -226,36 +228,39 @@ export default function TableSelection({
 
   // Debounced search with immediate clear
   useEffect(() => {
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
+    if (filterTimeoutRef.current) {
+      clearTimeout(filterTimeoutRef.current);
     }
 
-    if (!searchTerm.trim()) {
+    if (!inputValue.trim()) {
       // Immediate update for empty search
+      setSearchTerm('');
       setFilteredTables(tables);
       setIsFiltering(false);
       return;
     }
 
-    searchTimeoutRef.current = setTimeout(() => {
-      performFilter(searchTerm, tables);
-    }, 200);
+    setIsFiltering(true);
+    filterTimeoutRef.current = setTimeout(() => {
+      setSearchTerm(inputValue);
+      performFilter(inputValue, tables);
+    }, 300);
 
     return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
+      if (filterTimeoutRef.current) {
+        clearTimeout(filterTimeoutRef.current);
       }
     };
-  }, [searchTerm, tables, performFilter]);
+  }, [inputValue, tables, performFilter]);
 
   // Update filtered tables when tables change
   useEffect(() => {
-    if (!searchTerm.trim()) {
+    if (!inputValue.trim()) {
       setFilteredTables(tables);
     } else {
-      performFilter(searchTerm, tables);
+      performFilter(inputValue, tables);
     }
-  }, [tables, searchTerm, performFilter]);
+  }, [tables, inputValue, performFilter]);
 
   // Memoized selection state calculations using Set for O(1) lookups
   const selectionState = useMemo(() => {
@@ -304,13 +309,17 @@ export default function TableSelection({
 
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    setSearchTerm(value);
+    setInputValue(value);
   }, []);
 
   const clearSearch = useCallback(() => {
+    setInputValue('');
     setSearchTerm('');
     setFilteredTables(tables);
     setIsFiltering(false);
+    if (searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
   }, [tables]);
 
   if (loading) {
@@ -343,7 +352,7 @@ export default function TableSelection({
         </div>
         <div className="text-sm text-gray-500">
           {isFiltering && <span className="text-blue-600">Filtering...</span>}
-          {!isFiltering && filteredTables.length !== tables.length && (
+          {!isFiltering && searchTerm && filteredTables.length !== tables.length && (
             <span>{filteredTables.length} filtered</span>
           )}
         </div>
@@ -354,19 +363,18 @@ export default function TableSelection({
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
           <input
+            ref={searchInputRef}
             type="text"
-            value={searchTerm}
+            value={inputValue}
             onChange={handleSearchChange}
             placeholder="Search tables..."
             className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003B7E]/50"
             autoComplete="off"
-            disabled={isFiltering}
           />
-          {searchTerm && (
+          {inputValue && (
             <button
               onClick={clearSearch}
               className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg leading-none"
-              disabled={isFiltering}
             >
               ×
             </button>
@@ -384,7 +392,7 @@ export default function TableSelection({
           )}
           <span className="text-sm">
             {selectionState.allSelected ? 'Deselect All' : 'Select All'}
-            {searchTerm && ` (${filteredTables.length})`}
+            {inputValue && ` (${filteredTables.length})`}
           </span>
         </button>
       </div>
@@ -397,7 +405,7 @@ export default function TableSelection({
         </div>
       ) : filteredTables.length === 0 ? (
         <div className="p-4 text-center text-gray-500 border border-gray-200 rounded-lg">
-          {searchTerm ? 'No tables match your search' : 'No tables available'}
+          {inputValue ? 'No tables match your search' : 'No tables available'}
         </div>
       ) : (
         <VirtualizedTableList
@@ -431,7 +439,7 @@ export default function TableSelection({
             </div>
           ) : (
             <div className="mt-2 text-xs text-blue-600">
-              {selectedTables.slice(0, 3).join(', ')} and {selectedTables.length - 3} more...
+              {selectedTables.slice(0, 3).join(', ')} and {selectedTables.length - 3} more
             </div>
           )}
         </div>

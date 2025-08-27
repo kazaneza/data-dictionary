@@ -202,7 +202,7 @@ export default function DatabaseImport() {
       
       // Don't show error if request was cancelled
       if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-        toast.info('Connection cancelled');
+        toast('Connection cancelled');
         return;
       }
       
