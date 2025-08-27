@@ -257,7 +257,7 @@ def generate_field_descriptions_with_context(table_name: str, fields: List[Table
             for field in fields
         ])
 
-        prompt = f"""You are a senior database analyst and business systems expert. Analyze this table and provide comprehensive, business-focused descriptions for each field.
+        prompt = f"""You are a database analyst. Provide SHORT descriptions for each field.
 
 System Context: {source_context}
 
@@ -266,28 +266,23 @@ Fields:
 
 {fields_context}
 
-CRITICAL REQUIREMENTS: For each field, provide a concise business description (1-2 sentences, max 150 words per field) that explains:
-
-1. WHAT: What specific business data this field contains (be very detailed about the content)
-2. WHY: Why this data is important for business operations
-3. HOW: How this field is used in real business processes and workflows
-
-
-
-Focus on business value and practical usage. Keep descriptions concise but informative.
+IMPORTANT: Write ONLY 1 short sentence (max 80 characters) for each field explaining what data it stores.
 
 Format your response as:
 fieldName: description
 
-Make each description concise and business-focused (1-2 sentences each, under 150 words)."""
+Keep it simple and direct. Examples:
+- customer_id: Customer unique identifier
+- amount: Transaction amount in currency
+- date_created: Record creation timestamp"""
 
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a senior database analyst and business systems expert with 15+ years of experience across banking, ERP, CRM, and enterprise systems. You excel at creating concise, business-focused field descriptions that help stakeholders understand what data is stored, why it matters, and how it's used in business operations. Keep descriptions under 150 words per field."},
+                {"role": "system", "content": "You are a database analyst. Write very short, clear descriptions. Maximum 80 characters per field. Be direct and simple."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=2000,  # Reduced to ensure shorter descriptions
+            max_tokens=800,
             temperature=0.2
         )
 
@@ -301,9 +296,9 @@ Make each description concise and business-focused (1-2 sentences each, under 15
             if ':' in line:
                 field_name, description = line.split(':', 1)
                 desc = description.strip()
-                # Ensure field description doesn't exceed database limit (900 chars to be safe)
-                if len(desc) > 900:
-                    desc = desc[:900].rsplit('.', 1)[0] + '.'
+                # Ensure field description doesn't exceed 80 characters
+                if len(desc) > 80:
+                    desc = desc[:80].strip()
                 field_descriptions[field_name.strip()] = desc
         
         # Update field descriptions
