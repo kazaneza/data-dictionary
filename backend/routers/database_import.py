@@ -326,29 +326,30 @@ def generate_fallback_description(field_name: str, data_type: str, table_name: s
     """Generate a better fallback description when OpenAI fails."""
     field_lower = field_name.lower()
     
-    # Common field patterns with better descriptions
+    # Common field patterns with short descriptions
     if 'id' in field_lower and ('customer' in field_lower or 'client' in field_lower):
-        return f"Unique identifier linking to customer records, used for customer relationship tracking, data integrity, and cross-system references. This ID enables efficient lookups and maintains referential integrity across all customer-related business processes."
+        return "Customer unique identifier for record linking"
     elif 'id' in field_lower and field_lower.endswith('_id'):
         entity = field_name[:-3].replace('_', ' ').title()
-        return f"Foreign key reference to {entity} records, establishing relational data integrity and enabling efficient joins. This identifier maintains business relationships and supports data consistency across the system's operational workflows."
+        return f"Reference ID linking to {entity} records"
     elif 'amount' in field_lower or 'balance' in field_lower:
-        return f"Monetary value stored as {data_type}, representing financial amounts in the system's base currency. This field is critical for financial calculations, reporting, compliance, and audit trails, with precision maintained for accurate accounting."
+        return f"Monetary amount in base currency ({data_type})"
     elif 'date' in field_lower or 'time' in field_lower:
-        return f"Timestamp field ({data_type}) recording when specific business events occurred, essential for audit trails, compliance reporting, and business analytics. This temporal data supports regulatory requirements and operational tracking."
+        return f"Date/time when event occurred ({data_type})"
     elif 'status' in field_lower or 'state' in field_lower:
-        return f"Status indicator controlling business logic and workflow states for {table_name.replace('_', ' ').lower()} records. This field drives automated processes, user permissions, and business rule execution throughout the system."
+        return "Status indicator for record state"
     elif 'code' in field_lower:
-        return f"Standardized code value ({data_type}) used for categorization, business rule processing, and system integration. These codes ensure data consistency and enable efficient processing across different business functions."
+        return f"Standardized code for categorization ({data_type})"
     elif 'name' in field_lower or 'description' in field_lower:
-        return f"Descriptive text field ({data_type}) providing human-readable information for business users, reports, and customer communications. This field enhances data usability and supports clear business documentation."
+        return f"Descriptive text information ({data_type})"
     elif 'account' in field_lower:
-        return f"Account reference ({data_type}) linking to financial account structures and transaction processing systems. This field enables account-based operations, balance tracking, and customer service functions."
+        return f"Account reference for financial operations ({data_type})"
     elif 'number' in field_lower:
-        return f"Numeric identifier or sequence ({data_type}) used for unique identification, business referencing, and system integration. This number supports efficient data retrieval and maintains business process continuity."
+        return f"Numeric identifier or sequence ({data_type})"
     else:
-        # Generic but better fallback
+        # Generic short fallback
         clean_name = field_name.replace('_', ' ').title()
+        return f"{clean_name} data field ({data_type})"
 
 @router.post("/connect")
 async def connect_database(config: DatabaseConfig):

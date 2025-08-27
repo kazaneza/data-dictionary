@@ -403,9 +403,9 @@ export default function DatabaseImport() {
               createdTable = await api.createTable({
                 database_id: createdDb.id,
                 name: tableName,
-                description: tableDescription && tableDescription.length > 1800 
-                  ? tableDescription.substring(0, 1800).split('.').slice(0, -1).join('.') + '.'
-                  : tableDescription || `Table ${tableName} containing business data and operational information for system processes.`
+                description: tableDescription && tableDescription.length > 500 
+                  ? tableDescription.substring(0, 500).split('.').slice(0, -1).join('.') + '.'
+                  : tableDescription || `Stores ${tableName.replace('_', ' ').toLowerCase()} data for business operations.`
               });
             } catch (tableError) {
               console.error(`Failed to create table ${tableName}:`, tableError);
@@ -420,7 +420,9 @@ export default function DatabaseImport() {
                   table_id: createdTable.id,
                   name: field.fieldName,
                   type: field.dataType,
-                  description: field.description || `Business data field ${field.fieldName} storing ${field.dataType} information for operational and reporting purposes.`,
+                  description: field.description && field.description.length > 500 
+                    ? field.description.substring(0, 500).split('.').slice(0, -1).join('.') + '.'
+                    : field.description || `${field.fieldName.replace('_', ' ')} data (${field.dataType})`,
                   nullable: field.isNullable === 'YES',
                   is_primary_key: field.isPrimaryKey === 'YES',
                   is_foreign_key: field.isForeignKey === 'YES',
