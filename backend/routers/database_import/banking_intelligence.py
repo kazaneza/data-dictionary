@@ -15,6 +15,27 @@ class BankingIntelligence:
     BANKING_PATTERNS = {
         'temenos': {
             'system_type': 'Temenos T24 Core Banking',
+            'table_patterns': {
+                'STMT': 'Statement processing and account statement generation',
+                'AC': 'Account management and customer account operations',
+                'FT': 'Funds transfer and payment processing',
+                'AA': 'Arrangement Architecture for loans and deposits',
+                'CU': 'Customer information management',
+                'MM': 'Money market and treasury operations',
+                'SC': 'Securities and investment management',
+                'PD': 'Product definition and configuration',
+                'LD': 'Loans and deposits management',
+                'DE': 'Deal entry and transaction capture',
+                'RE': 'Reporting and regulatory compliance',
+                'ST': 'Standing instructions and automated payments',
+                'TF': 'Trade finance operations',
+                'FX': 'Foreign exchange trading',
+                'PP': 'Payment processing',
+                'LI': 'Limits management and credit control',
+                'EB': 'External banking interfaces',
+                'AI': 'Account information services',
+                'RC': 'Reconciliation and matching operations'
+            },
             'common_prefixes': {
                 'AA': 'Arrangement Architecture (loans, deposits)',
                 'AC': 'Account Management',
@@ -33,9 +54,28 @@ class BankingIntelligence:
                 'PP': 'Payment Processing',
                 'LI': 'Limits Management',
                 'EB': 'External Banking',
-                'AI': 'Account Information'
+                'AI': 'Account Information',
+                'RC': 'Reconciliation',
+                'STMT': 'Statement Processing'
             },
             'field_patterns': {
+                'DETAIL.ID': 'Unique identifier for detail record linkage',
+                'ENTRY.ID': 'Unique identifier for transaction entry record',
+                'MANDATE.REF': 'Reference to payment mandate or authorization',
+                'STMT.ID': 'Statement identifier for account statement',
+                'RC.ID': 'Reconciliation record identifier',
+                'TXN.REF': 'Transaction reference number',
+                'DEAL.REF': 'Deal or contract reference identifier',
+                'CUSTOMER.NO': 'Customer number in T24 system',
+                'ACCOUNT.NO': 'Account number identifier',
+                'PRODUCT.GROUP': 'Banking product group classification',
+                'VALUE.DATE': 'Value date for interest calculation',
+                'BOOKING.DATE': 'Transaction booking date',
+                'PROCESSING.DATE': 'Date when transaction was processed',
+                'NARRATIVE': 'Transaction description or narrative text',
+                'DEBIT.CREDIT': 'Transaction direction indicator',
+                'THEIR.REFERENCE': 'External party reference number',
+                'OUR.REFERENCE': 'Internal bank reference number',
                 'AMT': 'Amount (monetary value)',
                 'LCY': 'Local Currency',
                 'FCY': 'Foreign Currency', 
@@ -76,6 +116,12 @@ class BankingIntelligence:
     
     # Generic banking field patterns
     BANKING_FIELD_PATTERNS = {
+        'DD_MANDATE_REF': 'Direct debit mandate reference for payment authorization',
+        'RC_DETAIL_ID': 'Reconciliation detail record identifier for audit trail',
+        'STMT_ENTRY_ID': 'Statement entry identifier for transaction records',
+        'MANDATE_REF': 'Payment mandate reference for authorization tracking',
+        'DETAIL_ID': 'Detail record identifier for data linkage',
+        'ENTRY_ID': 'Entry record identifier for transaction tracking',
         'CUSTOMER_ID': 'Unique customer identifier for account linking',
         'ACCOUNT_ID': 'Unique account identifier for transactions',
         'ACCOUNT_NO': 'Customer-facing account number',
@@ -109,6 +155,11 @@ class BankingIntelligence:
     
     # Banking table patterns
     BANKING_TABLE_PATTERNS = {
+        'STMT': 'Statement processing and account statement generation',
+        'ENTRY': 'Transaction entry records and posting details',
+        'MANDATE': 'Payment mandate and authorization management',
+        'RECONCILIATION': 'Account reconciliation and matching operations',
+        'RC': 'Reconciliation and matching operations',
         'CUSTOMER': 'Stores customer information and relationship data for banking services',
         'CLIENT': 'Stores customer information and relationship data for banking services',
         'ACCOUNT': 'Manages bank account details, balances, and account-related information',
@@ -139,7 +190,7 @@ class BankingIntelligence:
         # Check for Temenos/T24
         if any(term in source_lower or term in desc_lower for term in ['temenos', 't24']):
             context = cls.BANKING_PATTERNS['temenos']
-            system_context = f"This is a {context['system_type']} system."
+            system_context = f"This is a {context['system_type']} system. T24 uses specific module prefixes and field naming conventions for banking operations."
             return system_context, context['field_patterns']
         
         # Generic banking system
@@ -162,7 +213,14 @@ class BankingIntelligence:
         
         # Temenos-specific table analysis
         if any(term in source_lower for term in ['temenos', 't24']):
-            table_prefix = table_name[:2].upper() if len(table_name) >= 2 else ''
+            # Check for full table name patterns first
+            temenos_tables = cls.BANKING_PATTERNS['temenos']['table_patterns']
+            for pattern, description in temenos_tables.items():
+                if pattern in table_upper:
+                    return f"T24 {description} module table"
+            
+            # Then check prefixes
+            table_prefix = table_name.split('_')[0].upper() if '_' in table_name else table_name[:2].upper()
             temenos_prefixes = cls.BANKING_PATTERNS['temenos']['common_prefixes']
             
             if table_prefix in temenos_prefixes:
@@ -184,17 +242,39 @@ class BankingIntelligence:
         if field_upper in cls.BANKING_FIELD_PATTERNS:
             return cls.BANKING_FIELD_PATTERNS[field_upper]
         
+        # Check for Temenos-specific patterns
+        source_lower = source_name.lower()
+        if any(term in source_lower for term in ['temenos', 't24']):
+            temenos_patterns = cls.BANKING_PATTERNS['temenos']['field_patterns']
+            for pattern, meaning in temenos_patterns.items():
+                if pattern in field_upper:
+                    return meaning
         # Pattern matching for partial matches
         if 'CUSTOMER' in field_upper and 'ID' in field_upper:
             return 'Customer unique identifier'
         elif 'ACCOUNT' in field_upper and 'ID' in field_upper:
             return 'Account unique identifier'
+        elif 'MANDATE' in field_upper and 'REF' in field_upper:
+            return 'Payment mandate reference for authorization'
+        elif 'DETAIL' in field_upper and 'ID' in field_upper:
+            return 'Detail record identifier for data linkage'
+        elif 'ENTRY' in field_upper and 'ID' in field_upper:
+            return 'Entry record identifier for transaction tracking'
+        elif 'RC' in field_upper and 'ID' in field_upper:
+            return 'Reconciliation record identifier'
         elif 'BALANCE' in field_upper or 'BAL' in field_upper:
             return 'Account balance amount'
         elif 'AMOUNT' in field_upper or 'AMT' in field_upper:
             return 'Monetary amount value'
         elif 'DATE' in field_upper:
-            return 'Date field for banking operations'
+            if 'VALUE' in field_upper:
+                return 'Value date for interest calculation'
+            elif 'BOOKING' in field_upper:
+                return 'Transaction booking date'
+            elif 'PROCESSING' in field_upper:
+                return 'Date when transaction was processed'
+            else:
+                return 'Date field for banking operations'
         elif 'TIME' in field_upper:
             return 'Timestamp for transaction processing'
         elif 'RATE' in field_upper:

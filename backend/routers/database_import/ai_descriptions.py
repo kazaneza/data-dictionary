@@ -57,43 +57,58 @@ class AIDescriptionGenerator:
             
             field_info = "\n".join(field_analysis)
             
-            prompt = f"""You are a banking systems expert analyzing a data dictionary.
+            prompt = f"""You are a senior banking systems analyst with deep expertise in {source_name}.
 
-Source System: {source_name}
-System Description: {source_description or 'Banking system'}
-System Context: {system_context}
-Table Context: {table_context}
+BANKING SYSTEM CONTEXT:
+- System Name: {source_name}
+- System Description: {source_description or 'Core banking system'}
+- Technical Context: {system_context}
+- Table Context: {table_context}
 
-Table: {table_name}
-Fields Analysis:
+ANALYZE THIS TABLE:
+Table Name: {table_name}
+
+Field Structure:
 {field_info}
 
-Based on your banking domain expertise and the field patterns, provide a precise business description of what this table stores and its role in banking operations.
+TASK: Provide a precise, business-focused description of what this table stores and its specific role in banking operations.
+
+CONTEXT CLUES:
+- If this is Temenos T24, consider module-specific functionality
+- Look at field patterns to understand the business purpose
+- Consider the relationship between fields (PKs, FKs, etc.)
+- Focus on WHAT banking data is stored, not HOW it's stored
 
 REQUIREMENTS:
-- Maximum 120 characters
-- Focus on business purpose, not technical details
-- Use banking terminology appropriately
-- Be specific about the type of banking data stored
+- Maximum 100 characters
+- Business purpose, not technical implementation
+- Use proper banking terminology
+- Be specific about the banking operation/function
 
-Example: "Stores customer account balances and transaction limits for daily banking operations"
+EXAMPLES:
+- "Statement entry records for customer account transaction history"
+- "Payment mandate references for direct debit authorization"
+- "Reconciliation detail records for nostro account matching"
 """
 
             response = openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a senior banking systems analyst with deep knowledge of core banking, payment systems, and financial data structures. Provide concise, accurate business descriptions."},
+                    {"role": "system", "content": f"You are a senior banking systems analyst specializing in {source_name}. You understand banking operations, regulatory requirements, and system architecture. Focus on business value and operational purpose."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=50,
+                max_tokens=40,
                 temperature=0.1
             )
 
             description = response.choices[0].message.content.strip()
             
-            # Ensure length constraint
-            if len(description) > 120:
-                description = description[:120].rsplit(' ', 1)[0] + '...'
+            # Clean up the description
+            description = description.strip('"').strip("'").strip()
+            
+            # Ensure length constraint  
+            if len(description) > 100:
+                description = description[:100].rsplit(' ', 1)[0] + '...'
             
             logger.info(f"Generated AI table description for {table_name}: {description}")
             return description
@@ -141,40 +156,48 @@ Example: "Stores customer account balances and transaction limits for daily bank
                     
                 fields_context.append(context_line)
 
-            prompt = f"""You are a banking systems expert creating field descriptions for a data dictionary.
+            prompt = f"""You are a senior banking systems analyst specializing in {source_name}.
 
-Source System: {source_name}
-System Description: {source_description or 'Banking system'}
-Context: {system_context}
+BANKING SYSTEM CONTEXT:
+- System: {source_name}
+- Description: {source_description or 'Core banking system'}
+- Technical Context: {system_context}
 
-Table: {table_name}
-Fields:
+ANALYZE THESE FIELDS IN TABLE: {table_name}
+
 {chr(10).join(fields_context)}
 
-For each field, provide a precise business description focusing on:
-- What banking data it stores
-- Its business purpose in banking operations
-- Banking-specific terminology where appropriate
+TASK: For each field, provide a precise business description that explains:
+1. What specific banking data it contains
+2. Its role in banking operations
+3. How it's used in the business context
+
+CONTEXT CLUES:
+- Consider the source system's specific terminology
+- Look for standard banking patterns (IDs, amounts, dates, codes)
+- Think about the table's overall purpose
+- Use proper banking domain language
 
 REQUIREMENTS:
-- Maximum 60 characters per description
-- Use banking domain knowledge
-- Be specific and business-focused
-- Format: fieldName: description
+- Maximum 50 characters per description
+- Business-focused, not technical
+- Use proper banking terminology
+- Format: "fieldName: description"
 
-Examples:
-- CUSTOMER_ID: Unique customer identifier for account linking
-- BALANCE_AMT: Current account balance in local currency
-- TXN_DATE: Transaction processing date and time
+EXAMPLES:
+- DD_MANDATE_REF: Direct debit mandate reference
+- RC_DETAIL_ID: Reconciliation detail record identifier
+- STMT_ENTRY_ID: Statement entry transaction identifier
+- VALUE_DATE: Value date for interest calculation
 """
 
             response = openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a senior banking systems analyst. Create precise, business-focused field descriptions using banking terminology."},
+                    {"role": "system", "content": f"You are a senior banking systems analyst with expertise in {source_name}. You understand banking operations, data flows, and business terminology. Focus on business purpose and operational context."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=800,
+                max_tokens=600,
                 temperature=0.2
             )
 
@@ -186,10 +209,10 @@ Examples:
             for line in description_lines:
                 if ':' in line:
                     field_name, description = line.split(':', 1)
-                    desc = description.strip()
-                    # Ensure field description doesn't exceed 60 characters
-                    if len(desc) > 60:
-                        desc = desc[:60].strip()
+                    desc = description.strip().strip('"').strip("'")
+                    # Ensure field description doesn't exceed 50 characters
+                    if len(desc) > 50:
+                        desc = desc[:50].rsplit(' ', 1)[0] + '...'
                     field_descriptions[field_name.strip()] = desc
             
             # Update field descriptions with banking-aware fallbacks
