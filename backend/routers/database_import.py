@@ -81,6 +81,95 @@ def get_source_system_context(source_name: str) -> str:
     else:
         return f"This is a business system called '{source_name}'. Analyze the table and field names to understand the business domain and provide relevant descriptions."
 def generate_table_description(table_name: str, fields: List[TableField]) -> str:
+def get_banking_context_prompt(source_name: str, source_description: str, table_name: str, fields: List[TableField]) -> str:
+    """Generate enhanced banking-specific context for better descriptions"""
+    
+    # Banking system patterns and terminology
+    banking_patterns = {
+        'temenos': {
+            'system_type': 'Temenos T24 Core Banking',
+            'common_prefixes': {
+                'AA': 'Arrangement Architecture (loans, deposits)',
+                'AC': 'Account Management',
+                'AM': 'Asset Management', 
+                'CU': 'Customer Management',
+                'FT': 'Funds Transfer',
+                'MM': 'Money Market',
+                'SC': 'Securities',
+                'PD': 'Product Definition',
+                'LD': 'Loans and Deposits',
+                'DE': 'Deal Entry',
+                'RE': 'Reporting',
+                'ST': 'Standing Instructions',
+                'TF': 'Trade Finance',
+                'FX': 'Foreign Exchange'
+            },
+            'field_patterns': {
+                'AMT': 'Amount (monetary value)',
+                'LCY': 'Local Currency',
+                'FCY': 'Foreign Currency', 
+                'CCY': 'Currency Code',
+                'BAL': 'Balance',
+                'DR': 'Debit',
+                'CR': 'Credit',
+                'TXN': 'Transaction',
+                'ACCT': 'Account',
+                'CUST': 'Customer',
+                'PROD': 'Product',
+                'RATE': 'Interest Rate',
+                'DATE': 'Date',
+                'TIME': 'Time',
+                'STATUS': 'Status/State',
+                'CODE': 'Reference Code',
+                'DESC': 'Description',
+                'REF': 'Reference',
+                'NO': 'Number/Sequence',
+                'ID': 'Identifier',
+                'TYPE': 'Type/Category',
+                'LIMIT': 'Limit/Threshold',
+                'CHARGE': 'Fee/Charge',
+                'COMM': 'Commission'
+            }
+        },
+        'core_banking': {
+            'system_type': 'Core Banking System',
+            'modules': ['accounts', 'loans', 'deposits', 'payments', 'cards', 'treasury']
+        },
+        'payment': {
+            'system_type': 'Payment Processing System',
+            'focus': 'transaction processing, settlement, clearing'
+        },
+        'risk': {
+            'system_type': 'Risk Management System', 
+            'focus': 'credit risk, market risk, operational risk'
+        }
+    }
+    
+    # Detect system type
+    source_lower = source_name.lower()
+    desc_lower = (source_description or '').lower()
+    
+    system_context = ""
+    field_hints = {}
+    
+    if any(term in source_lower or term in desc_lower for term in ['temenos', 't24']):
+        context = banking_patterns['temenos']
+        system_context = f"This is a {context['system_type']} system."
+        field_hints = context['field_patterns']
+        
+        # Add module-specific context based on table name
+        table_prefix = table_name[:2].upper() if len(table_name) >= 2 else ''
+        if table_prefix in context['common_prefixes']:
+            system_context += f" This table is part of {context['common_prefixes'][table_prefix]} module."
+    
+    elif any(term in source_lower or term in desc_lower for term in ['core banking', 'banking', 'bank']):
+        system_context = "This is a Core Banking System handling customer accounts, transactions, loans, and deposits."
+    
+    elif any(term in source_lower or term in desc_lower for term in ['payment', 'swift', 'ach', 'wire']):
+        system_context = "This is a Payment Processing System handling money transfers, settlements, and clearing operations."
+    
+    return system_context, field_hints
+
     """Generate a description for a table using OpenAI."""
     try:
         # Create a prompt that includes table name and field information
@@ -175,6 +264,108 @@ Keep it simple and direct. Example: "Stores customer account transactions and ba
 
     except Exception as e:
         logger.error(f"Error generating table description with context: {str(e)}")
+
+def generate_enhanced_banking_table_description(table_name: str, fields: List[TableField], source_name: str, source_description: str) -> str:
+    """Generate banking-specific table descriptions with domain knowledge"""
+    try:
+        system_context, field_hints = get_banking_context_prompt(source_name, source_description, table_name, fields)
+        
+        # Analyze field patterns for better context
+        field_analysis = []
+        for field in fields:
+            field_upper = field.fieldName.upper()
+            analysis = f"- {field.fieldName} ({field.dataType})"
+            
+            # Add banking-specific insights
+            for pattern, meaning in field_hints.items():
+                if pattern in field_upper:
+                    analysis += f" [{meaning}]"
+                    break
+            
+            if field.isPrimaryKey == 'Yes':
+                analysis += " [Primary Key]"
+            if field.isForeignKey == 'Yes':
+                analysis += " [Foreign Key]"
+                
+            field_analysis.append(analysis)
+        
+        field_info = "\n".join(field_analysis)
+        
+        prompt = f"""You are a banking systems expert analyzing a data dictionary.
+
+Source System: {source_name}
+System Description: {source_description or 'Banking system'}
+Context: {system_context}
+
+Table: {table_name}
+Fields Analysis:
+{field_info}
+
+Based on your banking domain expertise and the field patterns, provide a precise business description of what this table stores and its role in banking operations.
+
+REQUIREMENTS:
+- Maximum 120 characters
+- Focus on business purpose, not technical details
+- Use banking terminology appropriately
+- Be specific about the type of banking data stored
+
+Example: "Stores customer account balances and transaction limits for daily banking operations"
+"""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a senior banking systems analyst with deep knowledge of core banking, payment systems, and financial data structures. Provide concise, accurate business descriptions."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=50,
+            temperature=0.1
+        )
+
+        description = response.choices[0].message.content.strip()
+        
+        # Ensure length constraint
+        if len(description) > 120:
+            description = description[:120].rsplit(' ', 1)[0] + '...'
+        
+        logger.info(f"Generated enhanced banking description for table {table_name}: {description}")
+        return description
+
+    except Exception as e:
+        logger.error(f"Error generating enhanced banking table description: {str(e)}")
+        # Fallback to pattern-based description
+        return generate_banking_fallback_table_description(table_name, fields, source_name)
+
+def generate_banking_fallback_table_description(table_name: str, fields: List[TableField], source_name: str) -> str:
+    """Generate fallback descriptions using banking patterns"""
+    table_upper = table_name.upper()
+    
+    # Banking table patterns
+    if any(term in table_upper for term in ['CUSTOMER', 'CLIENT', 'CU']):
+        return "Stores customer information and relationship data for banking services"
+    elif any(term in table_upper for term in ['ACCOUNT', 'AC', 'ACCT']):
+        return "Manages bank account details, balances, and account-related information"
+    elif any(term in table_upper for term in ['TRANSACTION', 'TXN', 'TRANS', 'FT']):
+        return "Records financial transactions and money movement activities"
+    elif any(term in table_upper for term in ['LOAN', 'CREDIT', 'LD']):
+        return "Manages loan accounts, credit facilities, and lending operations"
+    elif any(term in table_upper for term in ['DEPOSIT', 'SAVINGS', 'TD']):
+        return "Handles deposit accounts and savings product information"
+    elif any(term in table_upper for term in ['PAYMENT', 'PAY']):
+        return "Processes payment instructions and settlement transactions"
+    elif any(term in table_upper for term in ['RATE', 'INTEREST']):
+        return "Stores interest rates and pricing information for banking products"
+    elif any(term in table_upper for term in ['LIMIT', 'THRESHOLD']):
+        return "Defines transaction limits and operational thresholds"
+    elif any(term in table_upper for term in ['CHARGE', 'FEE', 'COMM']):
+        return "Manages fees, charges, and commission structures"
+    else:
+        # Generic banking fallback
+        source_lower = source_name.lower()
+        if 'temenos' in source_lower or 't24' in source_lower:
+            return f"Temenos T24 data table for {table_name.replace('_', ' ').lower()} management"
+        else:
+            return f"Banking system table for {table_name.replace('_', ' ').lower()} operations"
 
 def generate_field_descriptions(table_name: str, fields: List[TableField]) -> List[TableField]:
     """Generate descriptions for fields using OpenAI."""
@@ -315,6 +506,184 @@ Keep it simple and direct. Examples:
         logger.error(f"Error generating field descriptions with context: {str(e)}")
         return fields
 
+def generate_enhanced_banking_field_descriptions(table_name: str, fields: List[TableField], source_name: str, source_description: str) -> List[TableField]:
+    """Generate banking-specific field descriptions with domain intelligence"""
+    try:
+        system_context, field_hints = get_banking_context_prompt(source_name, source_description, table_name, fields)
+        
+        # Build enhanced field context
+        fields_context = []
+        for field in fields:
+            field_upper = field.fieldName.upper()
+            context_line = f"- {field.fieldName} ({field.dataType})"
+            
+            # Add banking pattern hints
+            hints = []
+            for pattern, meaning in field_hints.items():
+                if pattern in field_upper:
+                    hints.append(meaning)
+            
+            if field.isPrimaryKey == 'Yes':
+                hints.append("Primary Key")
+            if field.isForeignKey == 'Yes':
+                hints.append("Foreign Key")
+            if field.isNullable == 'NO':
+                hints.append("Required")
+            if field.defaultValue:
+                hints.append(f"Default: {field.defaultValue}")
+                
+            if hints:
+                context_line += f" [{', '.join(hints)}]"
+                
+            fields_context.append(context_line)
+
+        prompt = f"""You are a banking systems expert creating field descriptions for a data dictionary.
+
+Source System: {source_name}
+System Description: {source_description or 'Banking system'}
+Context: {system_context}
+
+Table: {table_name}
+Fields:
+{chr(10).join(fields_context)}
+
+For each field, provide a precise business description focusing on:
+- What banking data it stores
+- Its business purpose in banking operations
+- Banking-specific terminology where appropriate
+
+REQUIREMENTS:
+- Maximum 60 characters per description
+- Use banking domain knowledge
+- Be specific and business-focused
+- Format: fieldName: description
+
+Examples:
+- CUSTOMER_ID: Unique customer identifier for account linking
+- BALANCE_AMT: Current account balance in local currency
+- TXN_DATE: Transaction processing date and time
+"""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a senior banking systems analyst. Create precise, business-focused field descriptions using banking terminology."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=800,
+            temperature=0.2
+        )
+
+        # Parse response and update field descriptions
+        response_text = response.choices[0].message.content.strip()
+        description_lines = [line.strip() for line in response_text.split('\n') if line.strip() and ':' in line]
+        
+        field_descriptions = {}
+        for line in description_lines:
+            if ':' in line:
+                field_name, description = line.split(':', 1)
+                desc = description.strip()
+                # Ensure field description doesn't exceed 60 characters
+                if len(desc) > 60:
+                    desc = desc[:60].strip()
+                field_descriptions[field_name.strip()] = desc
+        
+        # Update field descriptions with banking-aware fallbacks
+        for field in fields:
+            if field.fieldName in field_descriptions:
+                field.description = field_descriptions[field.fieldName]
+            else:
+                field.description = generate_banking_fallback_field_description(field.fieldName, field.dataType, table_name, source_name)
+
+        logger.info(f"Generated enhanced banking descriptions for {len(fields)} fields in table {table_name}")
+        return fields
+
+    except Exception as e:
+        logger.error(f"Error generating enhanced banking field descriptions: {str(e)}")
+        # Fallback to banking pattern-based descriptions
+        for field in fields:
+            field.description = generate_banking_fallback_field_description(field.fieldName, field.dataType, table_name, source_name)
+        return fields
+
+def generate_banking_fallback_field_description(field_name: str, data_type: str, table_name: str, source_name: str) -> str:
+    """Generate banking-specific fallback descriptions"""
+    field_upper = field_name.upper()
+    
+    # Banking field patterns with specific meanings
+    banking_patterns = {
+        'CUSTOMER_ID': 'Unique customer identifier for account linking',
+        'ACCOUNT_ID': 'Unique account identifier for transactions',
+        'ACCOUNT_NO': 'Customer-facing account number',
+        'BALANCE': 'Current account balance amount',
+        'AVAILABLE_BAL': 'Available balance for transactions',
+        'LEDGER_BAL': 'Ledger balance including pending items',
+        'AMT': 'Monetary amount in specified currency',
+        'AMOUNT': 'Transaction or balance amount',
+        'CCY': 'ISO currency code (USD, EUR, etc.)',
+        'CURRENCY': 'Currency denomination for amounts',
+        'LCY_AMT': 'Amount converted to local currency',
+        'FCY_AMT': 'Amount in foreign currency',
+        'TXN_DATE': 'Transaction processing date',
+        'VALUE_DATE': 'Value date for interest calculation',
+        'MATURITY_DATE': 'Product maturity or expiry date',
+        'RATE': 'Interest rate or exchange rate',
+        'INTEREST_RATE': 'Annual interest rate percentage',
+        'CHARGE_AMT': 'Fee or charge amount applied',
+        'COMMISSION': 'Commission amount or percentage',
+        'STATUS': 'Current status or state of record',
+        'PRODUCT_CODE': 'Banking product identifier',
+        'BRANCH_CODE': 'Bank branch identifier',
+        'GL_CODE': 'General ledger account code',
+        'REFERENCE': 'Transaction or system reference',
+        'DESCRIPTION': 'Descriptive text or narrative',
+        'LIMIT_AMT': 'Credit or transaction limit amount',
+        'OVERDRAFT': 'Overdraft facility amount',
+        'TENOR': 'Loan or deposit term period',
+        'FREQUENCY': 'Payment or interest frequency'
+    }
+    
+    # Check for exact matches first
+    if field_upper in banking_patterns:
+        return banking_patterns[field_upper]
+    
+    # Pattern matching for partial matches
+    if 'CUSTOMER' in field_upper and 'ID' in field_upper:
+        return 'Customer unique identifier'
+    elif 'ACCOUNT' in field_upper and 'ID' in field_upper:
+        return 'Account unique identifier'
+    elif 'BALANCE' in field_upper or 'BAL' in field_upper:
+        return 'Account balance amount'
+    elif 'AMOUNT' in field_upper or 'AMT' in field_upper:
+        return 'Monetary amount value'
+    elif 'DATE' in field_upper:
+        return 'Date field for banking operations'
+    elif 'TIME' in field_upper:
+        return 'Timestamp for transaction processing'
+    elif 'RATE' in field_upper:
+        return 'Rate value for calculations'
+    elif 'CODE' in field_upper:
+        return 'Reference code for categorization'
+    elif 'STATUS' in field_upper or 'STATE' in field_upper:
+        return 'Status indicator for record state'
+    elif 'LIMIT' in field_upper:
+        return 'Limit or threshold amount'
+    elif 'CHARGE' in field_upper or 'FEE' in field_upper:
+        return 'Fee or charge amount'
+    elif 'CURRENCY' in field_upper or 'CCY' in field_upper:
+        return 'Currency code or denomination'
+    elif 'DESCRIPTION' in field_upper or 'DESC' in field_upper:
+        return 'Descriptive text information'
+    elif 'NUMBER' in field_upper or 'NO' in field_upper:
+        return 'Numeric identifier or sequence'
+    elif 'NAME' in field_upper:
+        return 'Name or title information'
+    elif 'TYPE' in field_upper:
+        return 'Type or category classification'
+    else:
+        # Generic banking fallback
+        clean_name = field_name.replace('_', ' ').title()
+        return f"{clean_name} banking data field"
+
 def generate_fallback_description(field_name: str, data_type: str, table_name: str) -> str:
     """Generate a better fallback description when OpenAI fails."""
     field_lower = field_name.lower()
@@ -411,10 +780,10 @@ async def get_schema(request: SchemaRequest):
             ) for field in fields]
             
             # Generate table description
-            table_description = generate_table_description_with_context(request.tableName, table_fields, source_context)
+            table_description = generate_enhanced_banking_table_description(request.tableName, table_fields, source_system.name, source_system.description)
             
             # Generate field descriptions
-            table_fields = generate_field_descriptions_with_context(request.tableName, table_fields, source_context)
+            table_fields = generate_enhanced_banking_field_descriptions(request.tableName, table_fields, source_system.name, source_system.description)
             
             logger.info(f"Successfully processed schema for table {request.tableName}")
             return {
