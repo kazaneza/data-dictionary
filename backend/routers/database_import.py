@@ -127,11 +127,8 @@ Provide a clear, informative description (2-3 sentences) that would help a busin
     except Exception as e:
         logger.error(f"Error generating table description: {str(e)}")
         return f"Database table for {table_name.replace('_', ' ').title()} data storage and management"
-
 def generate_table_description_with_context(table_name: str, fields: List[TableField], source_context: str) -> str:
-    """Generate a description for a table using OpenAI with source system context."""
     try:
-        # Create a prompt that includes table name and field information
         field_info = "\n".join([
             f"- {field.fieldName} ({field.dataType}): " +
             f"{'Primary Key, ' if field.isPrimaryKey == 'Yes' else ''}" +
@@ -156,19 +153,20 @@ IMPORTANT: Write ONLY 1-2 short sentences (max 150 characters total) explaining:
 2. Its main business purpose
 
 Keep it simple and direct. Example: "Stores customer account transactions and balances for daily banking operations."
+"""  # <--- Add this line
+
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are a database analyst. Write very short, clear descriptions. Maximum 150 characters. Be direct and simple."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=50,  # Much shorter responses
+            max_tokens=50,
             temperature=0.1
         )
 
         description = response.choices[0].message.content.strip()
         
-        # Ensure description doesn't exceed database limit (500 chars to be very safe)
         if len(description) > 500:
             description = description[:500].rsplit('.', 1)[0] + '.'
         
