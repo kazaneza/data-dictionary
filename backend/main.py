@@ -16,7 +16,7 @@ import uuid
 import jwt
 from jwt.exceptions import ExpiredSignatureError, PyJWTError
 from config import ADMIN_USERS, MANAGER_USERS, JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRATION_MINUTES
-from routers import database_import
+from routers.database_import import router as database_import_router
 from routers import search
 
 # Configure logging
@@ -47,7 +47,7 @@ app.add_middleware(
 
 # Add the database import router
 app.include_router(
-    database_import.router,
+    database_import_router,
     prefix="/api/database",
     tags=["database-import"]
 )
