@@ -1,5 +1,5 @@
 """
-AI-powered description generation using OpenAI
+AI-powered description generation using OpenAI with improved prompting
 """
 
 import logging
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 class AIDescriptionGenerator:
-    """Generates AI-powered descriptions for tables and fields"""
+    """Generates AI-powered descriptions for tables and fields with improved business context"""
     
     @staticmethod
     def generate_table_description(
@@ -30,80 +30,117 @@ class AIDescriptionGenerator:
         source_name: str, 
         source_description: str = None
     ) -> str:
-        """Generate AI-powered table description with banking context"""
+        """Generate AI-powered table description with enhanced business context"""
         try:
-            # Get system context
-            system_context = BankingIntelligence.get_system_context(source_name, source_description)
+            # Build comprehensive context
+            context_parts = [f"Source System: {source_name}"]
+            if source_description:
+                context_parts.append(f"System Purpose: {source_description}")
             
-            # Build field analysis
+            # Analyze field patterns for better context
             field_analysis = []
+            key_fields = []
+            data_patterns = []
+            
             for field in fields:
-                analysis = f"- {field.fieldName} ({field.dataType})"
+                field_info = f"- {field.fieldName} ({field.dataType})"
                 if field.isPrimaryKey == 'Yes':
-                    analysis += " [Primary Key]"
+                    field_info += " [Primary Key]"
+                    key_fields.append(field.fieldName)
                 if field.isForeignKey == 'Yes':
-                    analysis += " [Foreign Key]"
+                    field_info += " [Foreign Key]"
                 if field.isNullable == 'NO':
-                    analysis += " [Required]"
-                field_analysis.append(analysis)
+                    field_info += " [Required]"
+                field_analysis.append(field_info)
+                
+                # Identify data patterns
+                field_lower = field.fieldName.lower()
+                if any(pattern in field_lower for pattern in ['date', 'time', 'created', 'updated', 'modified']):
+                    data_patterns.append('temporal_data')
+                elif any(pattern in field_lower for pattern in ['amount', 'balance', 'price', 'cost', 'fee']):
+                    data_patterns.append('financial_data')
+                elif any(pattern in field_lower for pattern in ['id', 'key', 'ref', 'code']):
+                    data_patterns.append('identifier_data')
+                elif any(pattern in field_lower for pattern in ['name', 'desc', 'title', 'label']):
+                    data_patterns.append('descriptive_data')
             
             field_info = "\n".join(field_analysis)
             
-            prompt = f"""You are a senior database analyst specializing in banking and financial systems.
+            # Enhanced prompt with better context and examples
+            prompt = f"""You are a senior data analyst specializing in business systems and data architecture.
 
-SOURCE SYSTEM CONTEXT:
-{system_context}
+CONTEXT:
+Source System: {source_name}
+{f"System Description: {source_description}" if source_description else ""}
 
-ANALYZE THIS DATABASE TABLE:
+TABLE TO ANALYZE:
 Table Name: {table_name}
 
-Field Structure:
+FIELD STRUCTURE:
 {field_info}
 
-TASK: Based on the source system information and table structure, provide a precise business description of what this table stores and its purpose.
+ANALYSIS PATTERNS DETECTED:
+- Key Fields: {', '.join(key_fields) if key_fields else 'None identified'}
+- Data Types Present: {', '.join(set(data_patterns)) if data_patterns else 'Mixed data types'}
 
-ANALYSIS GUIDELINES:
-1. Use the source system name and description to understand the business context
-2. Analyze field names to understand the table's purpose (e.g., CUSTOMER_ID suggests customer data)
-3. Consider field relationships (Primary Keys, Foreign Keys) to understand data flow
-4. Focus on WHAT business data is stored, not technical implementation
-5. Use appropriate business terminology based on the source system type
+TASK:
+Based on the source system context and table structure, provide a precise business description of what this table stores and its purpose.
 
 REQUIREMENTS:
-- Maximum 80 characters
-- Business-focused description
-- Use terminology appropriate to the source system
-- Be specific about the business function
+1. Focus on BUSINESS PURPOSE, not technical implementation
+2. Use terminology appropriate to the source system type
+3. Be specific about what business data/process this table supports
+4. Maximum 80 characters
+5. Use active, descriptive language
 
-EXAMPLES:
+EXAMPLES OF GOOD DESCRIPTIONS:
 - "Customer account master data for retail banking operations"
-- "Transaction entries for payment processing and settlement"
-- "Loan application records for credit management system"
+- "Daily transaction records for payment processing system"
+- "Product catalog entries for e-commerce platform"
+- "Employee payroll information for HR management"
+- "Audit trail entries for compliance tracking"
 
-Provide ONLY the description, no additional text."""
+EXAMPLES OF BAD DESCRIPTIONS:
+- "Table containing data" (too generic)
+- "Database table for storing information" (technical, not business-focused)
+- "Data storage for various fields" (meaningless)
+
+Provide ONLY the business description, no additional text or formatting."""
+
             response = openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a database analyst who creates concise, business-focused descriptions for database tables. You understand various banking and financial systems and can interpret table purposes from field structures and system context."},
+                    {
+                        "role": "system", 
+                        "content": "You are a business data analyst who creates precise, business-focused descriptions for database tables. You understand various business domains and can interpret table purposes from field structures and system context."
+                    },
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=30,
+                max_tokens=50,
                 temperature=0.1
             )
 
             description = response.choices[0].message.content.strip()
             # Clean up the description
             description = description.strip('"').strip("'").strip()
+            
             # Ensure length constraint  
             if len(description) > 80:
-                description = description[:80].rsplit(' ', 1)[0] + '...'
+                # Try to truncate at word boundary
+                truncated = description[:77]
+                last_space = truncated.rfind(' ')
+                if last_space > 60:  # Only truncate at word boundary if it's not too short
+                    description = truncated[:last_space] + '...'
+                else:
+                    description = truncated + '...'
+            
             logger.info(f"Generated AI table description for {table_name}: {description}")
             return description
 
         except Exception as e:
             logger.error(f"Error generating AI table description: {str(e)}")
-            # Fallback to simple description
-            return BankingIntelligence.get_simple_table_fallback(table_name, source_name)
+            # Enhanced fallback with better business context
+            return BankingIntelligence.get_enhanced_table_fallback(table_name, source_name, fields)
 
     @staticmethod
     def generate_field_descriptions(
@@ -112,15 +149,21 @@ Provide ONLY the description, no additional text."""
         source_name: str, 
         source_description: str = None
     ) -> List[TableField]:
-        """Generate AI-powered field descriptions with system context"""
+        """Generate AI-powered field descriptions with enhanced business context"""
         try:
-            # Get system context
-            system_context = BankingIntelligence.get_system_context(source_name, source_description)
-            # Build field context
+            # Build comprehensive system context
+            context_parts = [f"Source System: {source_name}"]
+            if source_description:
+                context_parts.append(f"System Purpose: {source_description}")
+            
+            system_context = "\n".join(context_parts)
+            
+            # Build enhanced field context with business intelligence
             fields_context = []
             for field in fields:
                 context_line = f"- {field.fieldName} ({field.dataType})"
-                # Add constraints
+                
+                # Add constraints and relationships
                 constraints = []
                 if field.isPrimaryKey == 'Yes':
                     constraints.append("Primary Key")
@@ -130,79 +173,113 @@ Provide ONLY the description, no additional text."""
                     constraints.append("Required")
                 if field.defaultValue:
                     constraints.append(f"Default: {field.defaultValue}")
+                
                 if constraints:
                     context_line += f" [{', '.join(constraints)}]"
+                
+                # Add business intelligence hints
+                field_hints = BankingIntelligence.get_field_business_hints(field.fieldName, field.dataType)
+                if field_hints:
+                    context_line += f" [Likely: {field_hints}]"
+                
                 fields_context.append(context_line)
 
-            prompt = f"""You are a database analyst specializing in banking and financial systems.
+            # Enhanced prompt with better business context
+            prompt = f"""You are a senior business analyst specializing in data systems and business processes.
 
-SOURCE SYSTEM CONTEXT:
+SYSTEM CONTEXT:
 {system_context}
 
-ANALYZE THESE FIELDS IN TABLE: {table_name}
-
+TABLE: {table_name}
+FIELDS TO ANALYZE:
 {chr(10).join(fields_context)}
 
-TASK: For each field, provide a precise business description based on the source system context and field characteristics.
+TASK:
+For each field, provide a precise business description that explains what the data represents and how it's used in the business context.
 
 ANALYSIS GUIDELINES:
-1. Use the source system information to understand business context
-2. Interpret field names in the context of the source system (e.g., in T24: RC = Reconciliation, STMT = Statement)
+1. Use the source system information to understand business domain
+2. Interpret field names in the business context (not just technical meaning)
 3. Consider data types and constraints to understand field purpose
-4. Use appropriate business terminology for the source system type
-5. Focus on WHAT business data the field contains and HOW it's used
+4. Focus on BUSINESS VALUE and USAGE, not technical implementation
+5. Use terminology appropriate to the source system domain
+6. Be specific about what business information the field contains
 
 REQUIREMENTS:
 - Maximum 50 characters per description
 - Business-focused, not technical
-- Use terminology appropriate to the source system
+- Use domain-appropriate terminology
 - Format: "fieldName: description"
+- Avoid generic phrases like "data field" or "information"
 
-EXAMPLES (adapt to your source system):
-- CUSTOMER_ID: Unique customer identifier
-- ACCOUNT_BALANCE: Current account balance amount
-- TRANSACTION_DATE: Date of transaction processing
-- MANDATE_REF: Payment authorization reference
+EXAMPLES OF GOOD DESCRIPTIONS:
+- customer_id: Unique customer identifier
+- account_balance: Current account balance amount
+- transaction_date: Date transaction was processed
+- interest_rate: Annual percentage rate applied
+- branch_code: Bank branch identifier code
+- status_flag: Account active/inactive indicator
 
-Provide descriptions for ALL fields in the format shown above."""
+EXAMPLES OF BAD DESCRIPTIONS:
+- customer_id: Customer ID field (too generic)
+- account_balance: Balance data (meaningless)
+- transaction_date: Date field (technical, not business)
+
+Provide descriptions for ALL fields in the exact format shown above."""
+
             response = openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a database analyst who creates concise, business-focused descriptions for database fields. You understand various banking and financial systems and can interpret field purposes from names, types, and system context."},
+                    {
+                        "role": "system", 
+                        "content": "You are a business data analyst who creates precise, business-focused descriptions for database fields. You understand various business domains and can interpret field purposes from names, types, and system context."
+                    },
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=800,
+                max_tokens=1200,
                 temperature=0.2
             )
 
             # Parse response and update field descriptions
             response_text = response.choices[0].message.content.strip()
             description_lines = [line.strip() for line in response_text.split('\n') if line.strip() and ':' in line]
+            
             field_descriptions = {}
             for line in description_lines:
                 if ':' in line:
                     field_name, description = line.split(':', 1)
                     desc = description.strip().strip('"').strip("'")
+                    
                     # Ensure field description doesn't exceed 50 characters
                     if len(desc) > 50:
-                        desc = desc[:50].rsplit(' ', 1)[0] + '...'
+                        # Try to truncate at word boundary
+                        truncated = desc[:47]
+                        last_space = truncated.rfind(' ')
+                        if last_space > 35:  # Only truncate at word boundary if it's not too short
+                            desc = truncated[:last_space] + '...'
+                        else:
+                            desc = truncated + '...'
+                    
                     field_descriptions[field_name.strip()] = desc
-            # Update field descriptions with fallbacks
+
+            # Update field descriptions with enhanced fallbacks
             for field in fields:
                 if field.fieldName in field_descriptions:
                     field.description = field_descriptions[field.fieldName]
                 else:
-                    field.description = BankingIntelligence.get_simple_fallback_description(
-                        field.fieldName, field.dataType
+                    # Enhanced fallback with business intelligence
+                    field.description = BankingIntelligence.get_enhanced_field_fallback(
+                        field.fieldName, field.dataType, source_name, table_name
                     )
+
             logger.info(f"Generated AI field descriptions for {len(fields)} fields in table {table_name}")
             return fields
 
         except Exception as e:
             logger.error(f"Error generating AI field descriptions: {str(e)}")
-            # Fallback to simple descriptions
+            # Enhanced fallback descriptions
             for field in fields:
-                field.description = BankingIntelligence.get_simple_fallback_description(
-                    field.fieldName, field.dataType
+                field.description = BankingIntelligence.get_enhanced_field_fallback(
+                    field.fieldName, field.dataType, source_name, table_name
                 )
             return fields
