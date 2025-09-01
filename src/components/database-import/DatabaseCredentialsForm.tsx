@@ -25,10 +25,10 @@ const DATABASE_TYPES = {
   },
   Oracle: {
     serverPlaceholder: 'e.g., localhost:1521 or server.domain.com',
-    databasePlaceholder: 'e.g., ORCL or service_name',
+    databasePlaceholder: 'e.g., ORCL, XE, or t24prod (service name)',
     usernamePlaceholder: 'e.g., system',
     schemaPlaceholder: 'e.g., T24, HR (optional)',
-    connectionFormat: 'username/password@server/service_name'
+    connectionFormat: 'username/password@server:1521/service_name'
   },
   PostgreSQL: {
     serverPlaceholder: 'e.g., localhost or db.domain.com',
@@ -68,7 +68,7 @@ export default function DatabaseCredentialsForm({
         />
         <p className="mt-1 text-xs text-gray-500">
           {config.type === 'MSSQL' && 'For named instances, use server\\instance format'}
-          {config.type === 'Oracle' && 'Include port if not using default (1521)'}
+          {config.type === 'Oracle' && 'Server IP or hostname (port 1521 will be used by default)'}
           {config.type === 'PostgreSQL' && 'Default port is 5432 if not specified'}
           {config.type === 'MySQL' && 'Default port is 3306 if not specified'}
         </p>
@@ -86,7 +86,7 @@ export default function DatabaseCredentialsForm({
           placeholder={dbTypeConfig.databasePlaceholder}
         />
         <p className="mt-1 text-xs text-gray-500">
-          {config.type === 'Oracle' && 'This is your Oracle service name or SID'}
+          {config.type === 'Oracle' && 'Oracle service name (e.g., t24prod, ORCL) or SID'}
           {config.type === 'PostgreSQL' && 'The name of the PostgreSQL database'}
           {config.type === 'MySQL' && 'The name of the MySQL database'}
         </p>
@@ -130,7 +130,7 @@ export default function DatabaseCredentialsForm({
             placeholder={dbTypeConfig.schemaPlaceholder}
           />
           <p className="mt-1 text-xs text-gray-500">
-            Optional: Specify schema name (e.g., T24) to access specific schema objects
+            Optional: Schema name to access (e.g., T24). If not specified, will use the username as schema.
           </p>
         </div>
       )}
@@ -140,6 +140,16 @@ export default function DatabaseCredentialsForm({
         <p className="text-xs text-gray-600 font-mono">
           {dbTypeConfig.connectionFormat}
         </p>
+        {config.type === 'Oracle' && (
+          <div className="mt-2 text-xs text-gray-500">
+            <p><strong>Note:</strong> Multiple connection formats will be attempted automatically:</p>
+            <ul className="list-disc list-inside mt-1 space-y-1">
+              <li>Service name format: server:1521/service_name</li>
+              <li>SID format: server:1521:SID</li>
+              <li>Easy Connect format variations</li>
+            </ul>
+          </div>
+        )}
       </div>
 
       <div className="flex space-x-2">

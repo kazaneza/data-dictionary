@@ -14,6 +14,7 @@ import time
 
 # Configure logging
 logger = logging.getLogger(__name__)
+from typing import List
 
 class OracleConnection(DatabaseConnection):
     def __init__(self, config: Dict[str, str]):
@@ -96,16 +97,32 @@ class OracleConnection(DatabaseConnection):
             
             schema = self.config.get('schema', '').upper() if 'schema' in self.config else None
             
-            conn_str = self.get_connection_string()
+            # Try multiple connection string formats
+            connection_attempts = self._get_connection_attempts()
+            
             logger.info(f"Attempting Oracle connection to {self.config['server']}")
             logger.info(f"Database: {self.config['database']}")
             logger.info(f"Username: {self.config['username']}")
             
-            self.connection = cx_Oracle.connect(
-                conn_str,
-                encoding="UTF-8",
-                nencoding="UTF-8"
-            )
+            last_error = None
+            for i, conn_str in enumerate(connection_attempts):
+                try:
+                    logger.info(f"Trying connection format {i+1}: {conn_str.replace(self.config['password'], '***')}")
+                    self.connection = cx_Oracle.connect(
+                        conn_str,
+                        encoding="UTF-8",
+                        nencoding="UTF-8"
+                    )
+                    logger.info(f"Successfully connected using format {i+1}")
+                    break
+                except cx_Oracle.DatabaseError as e:
+                    last_error = e
+                    logger.warning(f"Connection format {i+1} failed: {str(e)}")
+                    continue
+            
+            if not self.connection:
+                # All connection attempts failed, raise the last error
+                raise last_error
             
             cursor = self.connection.cursor()
             cursor.arraysize = 1000
@@ -195,6 +212,41 @@ class OracleConnection(DatabaseConnection):
             except Exception as e:
                 logger.error(f"Error closing Oracle connection: {str(e)}")
                 raise Exception(f"Failed to close connection: {str(e)}")
+
+    def _get_connection_attempts(self) -> List[str]:
+        """Generate multiple connection string formats to try"""
+        server = self.config['server']
+        database = self.config['database']
+        username = self.config['username']
+        password = self.config['password']
+        
+        attempts = []
+        
+        # Format 1: Direct service name (most common for Oracle 12c+)
+        attempts.append(f"{username}/{password}@{server}:1521/{database}")
+        
+        # Format 2: TNS Easy Connect with explicit port
+        attempts.append(f"{username}/{password}@{server}:1521/{database}")
+        
+        # Format 3: SID format (older Oracle versions)
+        attempts.append(f"{username}/{password}@{server}:1521:{database}")
+        
+        # Format 4: If server already includes port
+        if ':' in server:
+            attempts.append(f"{username}/{password}@{server}/{database}")
+            attempts.append(f"{username}/{password}@{server}:{database}")
+        
+        # Format 5: If server already includes service
+        if '/' in server:
+            attempts.append(f"{username}/{password}@{server}")
+        
+        # Format 6: Simple format without port (uses default 1521)
+        attempts.append(f"{username}/{password}@{server}/{database}")
+        
+        # Format 7: Alternative service format
+        attempts.append(f"{username}/{password}@//{server}:1521/{database}")
+        
+        return attempts
 
     def get_tables(self, batch_size: int = 1000) -> List[str]:
         """
@@ -434,9 +486,22 @@ class OracleConnection(DatabaseConnection):
     def get_connection_string(self) -> str:
         """Generate Oracle connection string."""
         try:
-            if '/' in self.config['server']:  # If server includes service name
-                return f"{self.config['username']}/{self.config['password']}@{self.config['server']}"
-            else:  # Standard TNS connection
-                return f"{self.config['username']}/{self.config['password']}@{self.config['server']}/{self.config['database']}"
+            server = self.config['server']
+            database = self.config['database']
+            username = self.config['username']
+            password = self.config['password']
+            
+            # Try different connection string formats based on the server configuration
+            if '/' in server:
+                # Server already includes service name (e.g., "10.24.37.96/t24prod")
+                return f"{username}/{password}@{server}"
+            elif ':' in server:
+                # Server includes port (e.g., "10.24.37.96:1521")
+                return f"{username}/{password}@{server}/{database}"
+            else:
+                # Try multiple formats for Oracle connection
+                # Format 1: Direct service connection
+                return f"{username}/{password}@{server}:1521/{database}"
+                
         except KeyError as e:
             raise Exception(f"Missing required configuration parameter: {str(e)}")

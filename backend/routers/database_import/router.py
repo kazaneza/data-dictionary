@@ -36,13 +36,30 @@ async def connect_database(config: DatabaseConfig):
     except Exception as e:
         error_msg = f"Database connection failed: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail={
+        
+        # Provide more specific error details for Oracle connections
+        if config.type == "Oracle" and "service" in str(e).lower():
+            detailed_error = {
+                "message": "Oracle connection failed",
+                "error": str(e),
+                "type": config.type,
+                "suggestions": [
+                    f"Verify the service name '{config.database}' is correct",
+                    "Try using SID instead of service name",
+                    "Check if the Oracle listener is running on the target server",
+                    "Verify the server address and port (default: 1521)"
+                ]
+            }
+        else:
+            detailed_error = {
                 "message": "Failed to connect to database",
                 "error": str(e),
                 "type": config.type
             }
+        
+        raise HTTPException(
+            status_code=500,
+            detail=detailed_error
         )
 
 @router.post("/schema")
