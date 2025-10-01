@@ -94,7 +94,7 @@ def process_import_job(job_id: str, db: Session):
                 schema_response = requests.post(
                     f"{BACKEND_URL}/api/database/schema",
                     json={**config_for_api, 'tableName': table_name},
-                    timeout=30
+                    timeout=300  # 5 minutes for large tables with AI descriptions
                 )
                 schema_response.raise_for_status()
                 schema_data = schema_response.json()
@@ -103,7 +103,7 @@ def process_import_job(job_id: str, db: Session):
                 desc_response = requests.post(
                     f"{BACKEND_URL}/api/database/describe",
                     json={'tableName': table_name, 'fields': schema_data.get('fields', [])},
-                    timeout=30
+                    timeout=300  # 5 minutes for large tables with AI descriptions
                 )
                 desc_response.raise_for_status()
                 desc_data = desc_response.json()
