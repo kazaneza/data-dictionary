@@ -154,6 +154,8 @@ export interface Table {
   category_id?: string;
   name: string;
   description?: string;
+  record_count?: number;
+  last_imported?: string;
 }
 
 export interface Field {
