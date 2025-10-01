@@ -127,12 +127,23 @@ def process_import_job(job_id: str, db: Session):
                 )
                 print(f"AI descriptions generated")
 
-                # Create table
+                # Get table record count
+                print(f"Counting records in {table_name}...")
+                from routers.database_connections import get_connection_handler
+                connection_class = get_connection_handler(config.get('type'))
+                handler = connection_class(config_for_api)
+                with handler:
+                    record_count = handler.get_table_count(table_name)
+                print(f"Table {table_name} has {record_count} records")
+
+                # Create table with stats
                 new_table = TableModel(
                     id=uuid_lib.uuid4(),
                     database_id=created_db_id,
                     name=table_name,
-                    description=table_description
+                    description=table_description,
+                    record_count=record_count,
+                    last_imported=datetime.now()
                 )
                 db.add(new_table)
                 db.flush()

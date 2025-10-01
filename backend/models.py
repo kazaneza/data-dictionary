@@ -30,6 +30,8 @@ class Table(Base):
     category_id = Column(UNIQUEIDENTIFIER, ForeignKey("categories.id"))
     name = Column(NVARCHAR(255), nullable=False)
     description = Column(NVARCHAR(2000))  # Increased from 1000 to 2000 characters
+    record_count = Column(Integer)
+    last_imported = Column(DateTime)
 
 class Field(Base):
     __tablename__ = "fields"

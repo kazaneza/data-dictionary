@@ -502,6 +502,28 @@ class OracleConnection(DatabaseConnection):
                 # Try multiple formats for Oracle connection
                 # Format 1: Direct service connection
                 return f"{username}/{password}@{server}:1521/{database}"
-                
+
         except KeyError as e:
             raise Exception(f"Missing required configuration parameter: {str(e)}")
+
+    def get_table_count(self, table_name: str) -> int:
+        """Get the number of records in a table"""
+        try:
+            cursor = self.connection.cursor()
+            # Use RECID as specified by user, fallback to COUNT(*) if RECID doesn't exist
+            try:
+                query = f"SELECT COUNT(RECID) FROM {table_name}"
+                cursor.execute(query)
+                count = cursor.fetchone()[0]
+            except:
+                # Fallback to COUNT(*) if RECID column doesn't exist
+                query = f"SELECT COUNT(*) FROM {table_name}"
+                cursor.execute(query)
+                count = cursor.fetchone()[0]
+
+            cursor.close()
+            logger.info(f"Table {table_name} has {count} records")
+            return count
+        except Exception as e:
+            logger.error(f"Error counting records in {table_name}: {str(e)}")
+            return 0

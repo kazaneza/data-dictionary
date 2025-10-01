@@ -108,3 +108,15 @@ class MSSQLConnection(DatabaseConnection):
             "Encrypt=yes;"
             "Connection Timeout=30;"
         )
+
+    def get_table_count(self, table_name: str) -> int:
+        """Get the number of records in a table"""
+        try:
+            cursor = self.connection.cursor()
+            query = f"SELECT COUNT(*) FROM {table_name}"
+            cursor.execute(query)
+            count = cursor.fetchone()[0]
+            cursor.close()
+            return count
+        except Exception as e:
+            return 0

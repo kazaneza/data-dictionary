@@ -35,6 +35,11 @@ class DatabaseConnection(ABC):
         """Get the connection string for the database"""
         pass
 
+    @abstractmethod
+    def get_table_count(self, table_name: str) -> int:
+        """Get the number of records in a table"""
+        pass
+
     def __enter__(self):
         self.connect()
         return self
