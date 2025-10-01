@@ -156,7 +156,7 @@ def update_import_job(job_id: UUID4, update: ImportJobUpdate, db: Session = Depe
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/import-jobs/{job_id}/process")
-async def process_import_job(job_id: UUID4, config: dict, selected_tables: List[str], db: Session = Depends(get_db)):
+async def process_import_job(job_id: UUID4, config: dict, selected_tables: List[str], user_info: dict = None, db: Session = Depends(get_db)):
     """Start processing an import job in the background"""
     import threading
 
@@ -171,7 +171,7 @@ async def process_import_job(job_id: UUID4, config: dict, selected_tables: List[
 
         thread = threading.Thread(
             target=process_import_job_background,
-            args=(str(job_id), config, selected_tables)
+            args=(str(job_id), config, selected_tables, user_info)
         )
         thread.daemon = True
         thread.start()
@@ -183,13 +183,15 @@ async def process_import_job(job_id: UUID4, config: dict, selected_tables: List[
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-def process_import_job_background(job_id: str, config: dict, selected_tables: List[str]):
+def process_import_job_background(job_id: str, config: dict, selected_tables: List[str], user_info: dict = None):
     """Process import job in background thread"""
     import requests
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     import os
     from dotenv import load_dotenv
+    import uuid as uuid_lib
+    from models import ImportJob, Database as DatabaseModel, Table as TableModel, Field as FieldModel
 
     load_dotenv()
 
@@ -204,7 +206,6 @@ def process_import_job_background(job_id: str, config: dict, selected_tables: Li
     db = SessionLocal()
 
     try:
-        from models import ImportJob
         job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
         if not job:
             return
@@ -215,17 +216,20 @@ def process_import_job_background(job_id: str, config: dict, selected_tables: Li
         created_db_id = None
 
         try:
-            response = requests.post(f"{backend_url}/databases", json={
-                'source_id': config.get('source_id'),
-                'name': config.get('database'),
-                'description': config.get('description'),
-                'type': config.get('type'),
-                'platform': config.get('platform'),
-                'location': config.get('location'),
-                'version': config.get('version'),
-            })
-            response.raise_for_status()
-            created_db_id = response.json().get('id')
+            new_db = DatabaseModel(
+                id=uuid_lib.uuid4(),
+                source_id=config.get('source_id'),
+                name=config.get('database'),
+                description=config.get('description'),
+                type=config.get('type'),
+                platform=config.get('platform'),
+                location=config.get('location'),
+                version=config.get('version')
+            )
+            db.add(new_db)
+            db.commit()
+            db.refresh(new_db)
+            created_db_id = new_db.id
         except Exception as e:
             job.status = 'failed'
             job.error_message = f'Failed to create database: {str(e)}'
@@ -250,32 +254,38 @@ def process_import_job_background(job_id: str, config: dict, selected_tables: Li
                 desc_response.raise_for_status()
                 desc_data = desc_response.json()
 
-                table_response = requests.post(f"{backend_url}/tables", json={
-                    'database_id': created_db_id,
-                    'name': table_name,
-                    'description': schema_data.get('table_description', f'Stores {table_name} data')
-                })
-                table_response.raise_for_status()
-                created_table = table_response.json()
+                new_table = TableModel(
+                    id=uuid_lib.uuid4(),
+                    database_id=created_db_id,
+                    name=table_name,
+                    description=schema_data.get('table_description', f'Stores {table_name} data')
+                )
+                db.add(new_table)
+                db.commit()
+                db.refresh(new_table)
 
                 for field in desc_data.get('fields', []):
-                    requests.post(f"{backend_url}/fields", json={
-                        'table_id': created_table['id'],
-                        'name': field['fieldName'],
-                        'type': field['dataType'],
-                        'description': field.get('description', ''),
-                        'nullable': field.get('isNullable') == 'YES',
-                        'is_primary_key': field.get('isPrimaryKey') == 'YES',
-                        'is_foreign_key': field.get('isForeignKey') == 'YES',
-                        'default_value': field.get('defaultValue'),
-                    })
+                    new_field = FieldModel(
+                        id=uuid_lib.uuid4(),
+                        table_id=new_table.id,
+                        name=field['fieldName'],
+                        type=field['dataType'],
+                        description=field.get('description', ''),
+                        nullable=field.get('isNullable') == 'YES',
+                        is_primary_key=field.get('isPrimaryKey') == 'YES',
+                        is_foreign_key=field.get('isForeignKey') == 'YES',
+                        default_value=field.get('defaultValue')
+                    )
+                    db.add(new_field)
 
+                db.commit()
                 imported_count += 1
                 job.imported_tables = imported_count
                 job.updated_at = datetime.utcnow()
                 db.commit()
 
             except Exception as e:
+                db.rollback()
                 failed_tables.append(table_name)
                 job.failed_tables = json.dumps(failed_tables)
                 job.updated_at = datetime.utcnow()
