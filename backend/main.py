@@ -118,6 +118,8 @@ class Table(Base):
     category_id = Column(UNIQUEIDENTIFIER, ForeignKey("categories.id"))
     name = Column(NVARCHAR(255), nullable=False)
     description = Column(NVARCHAR(1000))
+    record_count = Column(Integer)
+    last_imported = Column(DateTime)
 
 class Field(Base):
     __tablename__ = "fields"
