@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx';
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 const cache = new Map<string, { data: any; timestamp: number }>();
 
-const api = axios.create({
+export const api = axios.create({
   baseURL: 'http://10.24.37.99:8000',
   headers: {
     'Content-Type': 'application/json',

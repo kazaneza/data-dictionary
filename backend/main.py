@@ -18,6 +18,7 @@ from jwt.exceptions import ExpiredSignatureError, PyJWTError
 from config import ADMIN_USERS, MANAGER_USERS, JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRATION_MINUTES
 from routers.database_import import router as database_import_router
 from routers import search
+from routers import import_jobs
 
 # Configure logging
 logging.basicConfig(
@@ -57,6 +58,13 @@ app.include_router(
     search.router,
     prefix="/api",
     tags=["search"]
+)
+
+# Add the import jobs router
+app.include_router(
+    import_jobs.router,
+    prefix="/api",
+    tags=["import-jobs"]
 )
 # SQL Server connection settings
 SERVER = os.getenv("DB_SERVER")
@@ -128,6 +136,21 @@ class Category(Base):
     id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
     name = Column(NVARCHAR(255), nullable=False)
     description = Column(NVARCHAR(1000))
+
+class ImportJob(Base):
+    __tablename__ = "import_jobs"
+    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
+    user_id = Column(NVARCHAR(255), nullable=False)
+    config = Column(Text, nullable=False)
+    status = Column(NVARCHAR(50), nullable=False)
+    total_tables = Column(Integer, default=0)
+    imported_tables = Column(Integer, default=0)
+    failed_tables = Column(Text)
+    error_message = Column(Text)
+    database_id = Column(UNIQUEIDENTIFIER)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    completed_at = Column(DateTime)
 
 # Create tables if they don't exist
 Base.metadata.create_all(bind=engine)

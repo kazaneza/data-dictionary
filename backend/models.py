@@ -48,3 +48,18 @@ class Category(Base):
     id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
     name = Column(NVARCHAR(255), nullable=False)
     description = Column(NVARCHAR(1000))
+
+class ImportJob(Base):
+    __tablename__ = "import_jobs"
+    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
+    user_id = Column(NVARCHAR(255), nullable=False)
+    config = Column(Text, nullable=False)
+    status = Column(NVARCHAR(50), nullable=False)
+    total_tables = Column(Integer, default=0)
+    imported_tables = Column(Integer, default=0)
+    failed_tables = Column(Text)
+    error_message = Column(Text)
+    database_id = Column(UNIQUEIDENTIFIER)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    completed_at = Column(DateTime)

@@ -11,3 +11,4 @@ cx_Oracle
 psycopg2-binary
 numpy
 mysql-connector-python
+requests
