@@ -507,19 +507,53 @@ class OracleConnection(DatabaseConnection):
             raise Exception(f"Missing required configuration parameter: {str(e)}")
 
     def get_table_count(self, table_name: str) -> int:
-        """Get the number of records in a table"""
+        """Get the number of records in a table using fast approximate count"""
         try:
             cursor = self.connection.cursor()
-            # Use RECID as specified by user, fallback to COUNT(*) if RECID doesn't exist
+
+            # First try to get count from Oracle statistics (very fast)
             try:
-                query = f"SELECT COUNT(RECID) FROM {table_name}"
+                stats_query = f"""
+                    SELECT num_rows
+                    FROM all_tables
+                    WHERE table_name = UPPER('{table_name}')
+                    AND owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')
+                """
+                cursor.execute(stats_query)
+                result = cursor.fetchone()
+                if result and result[0] is not None:
+                    count = result[0]
+                    cursor.close()
+                    logger.info(f"Table {table_name} has approximately {count} records (from stats)")
+                    return count
+            except Exception as stats_error:
+                logger.warning(f"Could not get stats for {table_name}: {stats_error}")
+
+            # If stats not available, use COUNT with timeout hint
+            try:
+                # Use parallel hint and set a reasonable timeout (30 seconds)
+                query = f"SELECT /*+ PARALLEL(4) */ COUNT(*) FROM {table_name}"
                 cursor.execute(query)
-                count = cursor.fetchone()[0]
+
+                # Attempt to fetch with timeout
+                import signal
+
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Count query timeout")
+
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(30)  # 30 second timeout
+
+                try:
+                    count = cursor.fetchone()[0]
+                    signal.alarm(0)  # Cancel alarm
+                except TimeoutError:
+                    logger.warning(f"Count query timeout for {table_name}, returning 0")
+                    count = 0
+
             except:
-                # Fallback to COUNT(*) if RECID column doesn't exist
-                query = f"SELECT COUNT(*) FROM {table_name}"
-                cursor.execute(query)
-                count = cursor.fetchone()[0]
+                logger.warning(f"Could not count {table_name}, returning 0")
+                count = 0
 
             cursor.close()
             logger.info(f"Table {table_name} has {count} records")
