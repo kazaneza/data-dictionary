@@ -201,7 +201,12 @@ def process_import_job_background(job_id: str, config: dict, selected_tables: Li
     PASSWORD = os.getenv("DB_PASSWORD")
 
     CONNECTION_STRING = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={SERVER};DATABASE={DATABASE};UID={USERNAME};PWD={PASSWORD};TrustServerCertificate=yes"
-    engine = create_engine(f"mssql+pyodbc:///?odbc_connect={CONNECTION_STRING}")
+    engine = create_engine(
+        f"mssql+pyodbc:///?odbc_connect={CONNECTION_STRING}",
+        pool_size=2,
+        max_overflow=0,
+        pool_pre_ping=True
+    )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = SessionLocal()
 
@@ -243,14 +248,14 @@ def process_import_job_background(job_id: str, config: dict, selected_tables: Li
                 schema_response = requests.post(f"{backend_url}/api/database/schema", json={
                     **config,
                     'tableName': table_name
-                })
+                }, timeout=10)
                 schema_response.raise_for_status()
                 schema_data = schema_response.json()
 
                 desc_response = requests.post(f"{backend_url}/api/database/describe", json={
                     'tableName': table_name,
                     'fields': schema_data.get('fields', [])
-                })
+                }, timeout=10)
                 desc_response.raise_for_status()
                 desc_data = desc_response.json()
 
@@ -261,9 +266,9 @@ def process_import_job_background(job_id: str, config: dict, selected_tables: Li
                     description=schema_data.get('table_description', f'Stores {table_name} data')
                 )
                 db.add(new_table)
-                db.commit()
-                db.refresh(new_table)
+                db.flush()
 
+                fields_to_add = []
                 for field in desc_data.get('fields', []):
                     new_field = FieldModel(
                         id=uuid_lib.uuid4(),
@@ -276,13 +281,17 @@ def process_import_job_background(job_id: str, config: dict, selected_tables: Li
                         is_foreign_key=field.get('isForeignKey') == 'YES',
                         default_value=field.get('defaultValue')
                     )
-                    db.add(new_field)
+                    fields_to_add.append(new_field)
 
+                db.bulk_save_objects(fields_to_add)
                 db.commit()
+
                 imported_count += 1
-                job.imported_tables = imported_count
-                job.updated_at = datetime.utcnow()
-                db.commit()
+
+                if imported_count % 5 == 0:
+                    job.imported_tables = imported_count
+                    job.updated_at = datetime.utcnow()
+                    db.commit()
 
             except Exception as e:
                 db.rollback()
@@ -290,6 +299,9 @@ def process_import_job_background(job_id: str, config: dict, selected_tables: Li
                 job.failed_tables = json.dumps(failed_tables)
                 job.updated_at = datetime.utcnow()
                 db.commit()
+
+        job.imported_tables = imported_count
+        job.updated_at = datetime.utcnow()
 
         final_status = 'completed' if failed_tables == [] else ('failed' if imported_count == 0 else 'completed')
         job.status = final_status
