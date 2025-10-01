@@ -2,6 +2,7 @@
 Script to apply the table stats migration
 """
 from database import engine
+from sqlalchemy import text
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -16,9 +17,10 @@ def apply_migration():
             # Split by semicolon and execute each statement
             statements = [s.strip() for s in sql.split(';') if s.strip()]
             for statement in statements:
-                if statement:
+                # Skip comments
+                if statement and not statement.startswith('--'):
                     logger.info(f"Executing: {statement}")
-                    conn.execute(statement)
+                    conn.execute(text(statement))
                     conn.commit()
 
         logger.info("Migration applied successfully!")
