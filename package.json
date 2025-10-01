@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "backend": "python3 backend/main.py"
+    "backend": "python3 backend/main.py",
+    "worker": "python3 backend/import_worker.py"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.7",
