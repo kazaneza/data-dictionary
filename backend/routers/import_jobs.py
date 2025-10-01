@@ -163,8 +163,9 @@ async def process_import_job(job_id: UUID4, config: dict, selected_tables: List[
         if not job:
             raise HTTPException(status_code=404, detail="Import job not found")
 
-        # Store config with selected tables for worker
-        job.config = {**config, 'selected_tables': json.dumps(selected_tables)}
+        # Store config with selected tables for worker (as JSON string)
+        config_data = {**config, 'selected_tables': json.dumps(selected_tables)}
+        job.config = json.dumps(config_data)
         job.status = 'pending'
         job.updated_at = datetime.utcnow()
         db.commit()

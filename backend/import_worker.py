@@ -40,8 +40,14 @@ def process_import_job(job_id: str, db: Session):
             return
 
         print(f"Processing job {job_id}")
-        config = job.config
-        selected_tables = json.loads(job.config.get('selected_tables', '[]'))
+
+        # Parse config if it's a string
+        if isinstance(job.config, str):
+            config = json.loads(job.config)
+        else:
+            config = job.config
+
+        selected_tables = json.loads(config.get('selected_tables', '[]'))
 
         imported_count = 0
         failed_tables = []
