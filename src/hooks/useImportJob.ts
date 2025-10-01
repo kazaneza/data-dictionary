@@ -23,6 +23,38 @@ export function useImportJob() {
   const pollingIntervalRef = useRef<number | null>(null);
   const authListenerRef = useRef<any>(null);
 
+  // Check for active import jobs when component mounts or user logs in
+  const checkForActiveJobs = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) return;
+
+      // Find any in-progress or pending jobs for this user
+      const { data: jobs, error } = await supabase
+        .from('import_jobs')
+        .select('*')
+        .eq('user_id', user.id)
+        .in('status', ['pending', 'in_progress'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (error) {
+        console.error('Failed to check for active jobs:', error);
+        return;
+      }
+
+      if (jobs && jobs.length > 0) {
+        const job = jobs[0] as ImportJob;
+        setActiveJob(job);
+        setIsPolling(true);
+        toast('Resuming import job...', { duration: 2000 });
+      }
+    } catch (error) {
+      console.error('Error checking for active jobs:', error);
+    }
+  };
+
   const startImportJob = async (config: any, selectedTables: string[]) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -161,13 +193,25 @@ export function useImportJob() {
     }
   }, [isPolling, activeJob]);
 
-  // Listen for auth changes and cancel active jobs on logout
+  // Check for active jobs on mount
+  useEffect(() => {
+    checkForActiveJobs();
+  }, []);
+
+  // Listen for auth changes - DON'T cancel job on logout, just stop polling
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.onAuthStateChange(async (event, session) => {
         if (event === 'SIGNED_OUT' && activeJob) {
-          // Cancel active job on logout
-          await cancelImportJob(activeJob.id);
+          // Stop polling but DON'T cancel the job - it continues in background
+          setIsPolling(false);
+          setActiveJob(null);
+          toast('Import continues in background. Check status after logging back in.', {
+            duration: 4000,
+          });
+        } else if (event === 'SIGNED_IN') {
+          // Check for active jobs when user logs back in
+          await checkForActiveJobs();
         }
       });
 
