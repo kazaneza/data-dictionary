@@ -64,22 +64,10 @@ async def connect_database(config: DatabaseConfig):
 
 @router.post("/schema")
 async def get_schema(request: SchemaRequest):
-    """Get table schema with AI-generated descriptions"""
+    """Get table schema without AI descriptions (AI generation handled by worker)"""
     try:
         logger.info(f"Getting schema for table {request.tableName}")
-        
-        # Get source system information for context
-        from database import SessionLocal
-        from models import SourceSystem
-        
-        db = SessionLocal()
-        try:
-            source_system = db.query(SourceSystem).filter(SourceSystem.id == request.source_id).first()
-            source_name = source_system.name if source_system else "Unknown System"
-            source_description = source_system.description if source_system else None
-        finally:
-            db.close()
-        
+
         # Get the appropriate connection handler
         connection_class = get_connection_handler(request.type)
         handler = connection_class(request.dict())
@@ -88,8 +76,8 @@ async def get_schema(request: SchemaRequest):
             # Get table schema
             fields = handler.get_table_schema(request.tableName)
             logger.debug(f"Retrieved {len(fields)} fields for table {request.tableName}")
-            
-            # Convert to TableField objects
+
+            # Convert to TableField objects (no AI descriptions yet)
             table_fields = [TableField(
                 tableName=request.tableName,
                 fieldName=field["fieldName"],
@@ -99,21 +87,11 @@ async def get_schema(request: SchemaRequest):
                 isForeignKey=field["isForeignKey"],
                 defaultValue=field["defaultValue"]
             ) for field in fields]
-            
-            # Generate table description using AI
-            table_description = AIDescriptionGenerator.generate_table_description(
-                request.tableName, table_fields, source_name, source_description
-            )
-            
-            # Generate field descriptions using AI
-            table_fields = AIDescriptionGenerator.generate_field_descriptions(
-                request.tableName, table_fields, source_name, source_description
-            )
-            
-            logger.info(f"Successfully processed schema for table {request.tableName}")
+
+            logger.info(f"Successfully retrieved schema for table {request.tableName} with {len(fields)} fields")
             return {
                 "fields": [field.dict() for field in table_fields],
-                "table_description": table_description
+                "table_description": f"Stores {request.tableName} data"  # Placeholder
             }
 
     except ValueError as ve:

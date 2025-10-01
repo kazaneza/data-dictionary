@@ -11,7 +11,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 import os
 from dotenv import load_dotenv
-from models import ImportJob, Database as DatabaseModel, Table as TableModel, Field as FieldModel
+from models import ImportJob, Database as DatabaseModel, Table as TableModel, Field as FieldModel, SourceSystem
+from routers.database_import.ai_descriptions import AIDescriptionGenerator
+from routers.database_import.models import TableField
 
 load_dotenv()
 
@@ -89,48 +91,65 @@ def process_import_job(job_id: str, db: Session):
             try:
                 print(f"Processing table: {table_name}")
 
-                # Get schema - exclude selected_tables from config spread
+                # Get schema (fast, no AI) - exclude selected_tables from config spread
                 config_for_api = {k: v for k, v in config.items() if k != 'selected_tables'}
                 schema_response = requests.post(
                     f"{BACKEND_URL}/api/database/schema",
                     json={**config_for_api, 'tableName': table_name},
-                    timeout=300  # 5 minutes for large tables with AI descriptions
+                    timeout=60  # Should be fast now without AI
                 )
                 schema_response.raise_for_status()
                 schema_data = schema_response.json()
 
-                # Get descriptions
-                desc_response = requests.post(
-                    f"{BACKEND_URL}/api/database/describe",
-                    json={'tableName': table_name, 'fields': schema_data.get('fields', [])},
-                    timeout=300  # 5 minutes for large tables with AI descriptions
+                # Get source system info for AI context
+                source_system = db.query(SourceSystem).filter(SourceSystem.id == config.get('source_id')).first()
+                source_name = source_system.name if source_system else "Unknown System"
+                source_description = source_system.description if source_system else None
+
+                # Convert fields to TableField objects
+                table_fields = [TableField(
+                    tableName=table_name,
+                    fieldName=field['fieldName'],
+                    dataType=field['dataType'],
+                    isNullable=field['isNullable'],
+                    isPrimaryKey=field['isPrimaryKey'],
+                    isForeignKey=field['isForeignKey'],
+                    defaultValue=field['defaultValue']
+                ) for field in schema_data.get('fields', [])]
+
+                # Generate AI descriptions in worker (background)
+                print(f"Generating AI descriptions for {len(table_fields)} fields...")
+                table_description = AIDescriptionGenerator.generate_table_description(
+                    table_name, table_fields, source_name, source_description
                 )
-                desc_response.raise_for_status()
-                desc_data = desc_response.json()
+                table_fields = AIDescriptionGenerator.generate_field_descriptions(
+                    table_name, table_fields, source_name, source_description
+                )
+                print(f"AI descriptions generated")
 
                 # Create table
                 new_table = TableModel(
                     id=uuid_lib.uuid4(),
                     database_id=created_db_id,
                     name=table_name,
-                    description=schema_data.get('table_description', f'Stores {table_name} data')
+                    description=table_description
                 )
                 db.add(new_table)
                 db.flush()
 
                 # Bulk create fields
                 fields_to_add = []
-                for field in desc_data.get('fields', []):
+                for field in table_fields:
                     new_field = FieldModel(
                         id=uuid_lib.uuid4(),
                         table_id=new_table.id,
-                        name=field['fieldName'],
-                        type=field['dataType'],
-                        description=field.get('description', ''),
-                        nullable=field.get('isNullable') == 'YES',
-                        is_primary_key=field.get('isPrimaryKey') == 'YES',
-                        is_foreign_key=field.get('isForeignKey') == 'YES',
-                        default_value=field.get('defaultValue')
+                        name=field.fieldName,
+                        type=field.dataType,
+                        description=field.description or '',
+                        nullable=field.isNullable == 'YES',
+                        is_primary_key=field.isPrimaryKey == 'YES',
+                        is_foreign_key=field.isForeignKey == 'YES',
+                        default_value=field.defaultValue
                     )
                     fields_to_add.append(new_field)
 
