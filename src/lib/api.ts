@@ -345,6 +345,7 @@ export const login = async (username: string, password: string) => {
   const { token, role } = response.data;
   localStorage.setItem('authToken', token);
   localStorage.setItem('userRole', role);
+  localStorage.setItem('username', username);
   return { token, role };
 };
 

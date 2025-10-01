@@ -138,7 +138,7 @@ export function useImportJob() {
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'token') {
+      if (e.key === 'authToken') {
         if (!e.newValue && activeJob) {
           setIsPolling(false);
           setActiveJob(null);
