@@ -25,8 +25,10 @@ export function useImportJob() {
 
   const checkForActiveJobs = async () => {
     try {
-      const currentUser = localStorage.getItem('username');
-      if (!currentUser) return;
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) return;
+
+      const currentUser = localStorage.getItem('username') || 'unknown_user';
 
       const response = await api.get(`/api/import-jobs/user/${currentUser}?status=pending,in_progress`);
       const jobs = response.data;
@@ -44,11 +46,16 @@ export function useImportJob() {
 
   const startImportJob = async (config: any, selectedTables: string[]) => {
     try {
-      const currentUser = localStorage.getItem('username');
+      const authToken = localStorage.getItem('authToken');
+      let currentUser = localStorage.getItem('username');
 
-      if (!currentUser) {
+      if (!authToken) {
         toast.error('You must be logged in to start an import');
         return null;
+      }
+
+      if (!currentUser) {
+        currentUser = 'unknown_user';
       }
 
       const response = await api.post('/api/import-jobs', {
