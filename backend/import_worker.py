@@ -40,12 +40,17 @@ def process_import_job(job_id: str, db: Session):
             return
 
         print(f"Processing job {job_id}")
+        print(f"Config type: {type(job.config)}")
+        print(f"Config value: {job.config}")
 
         # Parse config if it's a string
         if isinstance(job.config, str):
             config = json.loads(job.config)
         else:
             config = job.config
+
+        print(f"Parsed config type: {type(config)}")
+        print(f"Parsed config: {config}")
 
         selected_tables = json.loads(config.get('selected_tables', '[]'))
 
@@ -84,10 +89,11 @@ def process_import_job(job_id: str, db: Session):
             try:
                 print(f"Processing table: {table_name}")
 
-                # Get schema
+                # Get schema - exclude selected_tables from config spread
+                config_for_api = {k: v for k, v in config.items() if k != 'selected_tables'}
                 schema_response = requests.post(
                     f"{BACKEND_URL}/api/database/schema",
-                    json={**config, 'tableName': table_name},
+                    json={**config_for_api, 'tableName': table_name},
                     timeout=30
                 )
                 schema_response.raise_for_status()

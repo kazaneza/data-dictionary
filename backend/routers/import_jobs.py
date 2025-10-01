@@ -163,8 +163,14 @@ async def process_import_job(job_id: UUID4, config: dict, selected_tables: List[
         if not job:
             raise HTTPException(status_code=404, detail="Import job not found")
 
+        # Parse existing config if it's a string, then merge with new data
+        if isinstance(job.config, str):
+            existing_config = json.loads(job.config)
+        else:
+            existing_config = job.config if job.config else {}
+
         # Store config with selected tables for worker (as JSON string)
-        config_data = {**config, 'selected_tables': json.dumps(selected_tables)}
+        config_data = {**existing_config, **config, 'selected_tables': json.dumps(selected_tables)}
         job.config = json.dumps(config_data)
         job.status = 'pending'
         job.updated_at = datetime.utcnow()
