@@ -8,6 +8,7 @@ import DatabaseInfoForm from '../components/database-import/DatabaseInfoForm';
 import DatabaseCredentialsForm from '../components/database-import/DatabaseCredentialsForm';
 import SchemaPreview from '../components/database-import/SchemaPreview';
 import ConnectionHistory, { saveConnectionHistory, createHistoryItem } from '../components/database-import/ConnectionHistory';
+import { useImportJob } from '../hooks/useImportJob';
 
 interface DatabaseConfig {
   server: string;
@@ -74,6 +75,9 @@ export default function DatabaseImport() {
   const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
   const [importStartTime, setImportStartTime] = useState<number | null>(null);
   const [connectionController, setConnectionController] = useState<AbortController | null>(null);
+
+  // Background import job management
+  const { activeJob, startImportJob, cancelImportJob, isPolling } = useImportJob();
 
   useEffect(() => {
     const fetchSources = async () => {
@@ -331,170 +335,16 @@ export default function DatabaseImport() {
   };
 
   const handleImport = async () => {
-    if (!importStartTime || !currentHistoryId) {
-      toast.error('Import session not properly initialized');
-      return;
-    }
-
     if (!previewData || selectedTables.length === 0) {
       toast.error('Please select at least one table to import');
       return;
     }
 
-    try {
-      setLoading(true);
-      
-      toast.loading('Starting import process...', { id: 'import' });
-      
-      // Update history to show import in progress
-      const inProgressItem = createHistoryItem(
-        config,
-        'in_progress',
-        selectedTables.length,
-        0,
-        [],
-        undefined,
-        undefined
-      );
-      inProgressItem.id = currentHistoryId;
-      saveConnectionHistory(inProgressItem);
+    // Start background import job
+    const jobId = await startImportJob(config, selectedTables);
 
-      // Create database with error handling
-      let createdDb;
-      try {
-        createdDb = await api.createDatabase({
-          source_id: config.source_id,
-          name: config.database,
-          description: config.description,
-          type: config.type,
-          platform: config.platform,
-          location: config.location,
-          version: config.version
-        });
-        toast.success(`Database "${createdDb.name}" created successfully`);
-      } catch (error) {
-        console.error('Failed to create database:', error);
-        toast.error('Failed to create database. Please check if it already exists.');
-        throw error;
-      }
-
-      let importedCount = 0;
-      const failedTables: string[] = [];
-      const totalTables = selectedTables.length;
-      
-      toast.dismiss('import');
-
-      // Process tables in batches to avoid overwhelming the system
-      const batchSize = 3; // Reduced batch size for better stability
-      for (let i = 0; i < selectedTables.length; i += batchSize) {
-        const batch = selectedTables.slice(i, i + batchSize);
-        
-        await Promise.allSettled(batch.map(async (tableName) => {
-          try {
-            toast.loading(`Importing ${tableName}... (${importedCount + 1}/${totalTables})`, { 
-              id: `import-${tableName}` 
-            });
-            // Fetch table schema
-            const { fields: tableFields, tableDescription } = await fetchTableFields(tableName);
-
-            // Create table with error handling
-            let createdTable;
-            try {
-              createdTable = await api.createTable({
-                database_id: createdDb.id,
-                name: tableName,
-                description: tableDescription && tableDescription.length > 500 
-                  ? tableDescription.substring(0, 500).split('.').slice(0, -1).join('.') + '.'
-                  : tableDescription || `Stores ${tableName.replace('_', ' ').toLowerCase()} data for business operations.`
-              });
-            } catch (tableError) {
-              console.error(`Failed to create table ${tableName}:`, tableError);
-              throw new Error(`Failed to create table: ${tableError instanceof Error ? tableError.message : 'Unknown error'}`);
-            }
-
-            // Create fields with error handling
-            let fieldCount = 0;
-            for (const field of tableFields) {
-              try {
-                await api.createField({
-                  table_id: createdTable.id,
-                  name: field.fieldName,
-                  type: field.dataType,
-                  description: field.description && field.description.length > 500 
-                    ? field.description.substring(0, 500).split('.').slice(0, -1).join('.') + '.'
-                    : field.description || `${field.fieldName.replace('_', ' ')} data (${field.dataType})`,
-                  nullable: field.isNullable === 'YES',
-                  is_primary_key: field.isPrimaryKey === 'YES',
-                  is_foreign_key: field.isForeignKey === 'YES',
-                  default_value: field.defaultValue
-                });
-                fieldCount++;
-              } catch (fieldError) {
-                console.error(`Failed to create field ${field.fieldName} in table ${tableName}:`, fieldError);
-                // Continue with other fields even if one fails
-              }
-            }
-
-            importedCount++;
-            
-            toast.dismiss(`import-${tableName}`);
-            toast.success(`✓ ${tableName} (${fieldCount} fields) - ${importedCount}/${totalTables}`, {
-              duration: 2000
-            });
-            
-            // Update progress in history
-            const progressItem = createHistoryItem(
-              config,
-              'in_progress',
-              totalTables,
-              importedCount,
-              failedTables,
-              undefined,
-              undefined
-            );
-            progressItem.id = currentHistoryId;
-            saveConnectionHistory(progressItem);
-            
-          } catch (error) {
-            toast.dismiss(`import-${tableName}`);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            console.error(`Failed to import table ${tableName}:`, errorMessage);
-            failedTables.push(tableName);
-            toast.error(`✗ ${tableName}: ${errorMessage}`, { duration: 4000 });
-          }
-        }));
-        
-        // No delay needed since we're processing one at a time
-      }
-
-      // Final history update
-      const finalStatus = failedTables.length === 0 ? 'success' : 
-                         importedCount === 0 ? 'failed' : 'partial';
-      
-      const finalItem = createHistoryItem(
-        config,
-        finalStatus,
-        totalTables,
-        importedCount,
-        failedTables,
-        failedTables.length > 0 ? `${failedTables.length} tables failed to import` : undefined,
-        Date.now() - importStartTime
-      );
-      finalItem.id = currentHistoryId;
-      saveConnectionHistory(finalItem);
-
-      if (importedCount > 0) {
-        toast.success(`🎉 Successfully imported ${importedCount}/${totalTables} tables to data dictionary!`, {
-          duration: 5000
-        });
-      }
-      
-      if (failedTables.length > 0) {
-        toast.error(`⚠️ ${failedTables.length}/${totalTables} tables failed to import. Check logs for details.`, {
-          duration: 5000
-        });
-      }
-
+    if (jobId) {
+      // Clear the UI immediately - import continues in background
       setConfig({
         server: '',
         database: '',
@@ -515,28 +365,6 @@ export default function DatabaseImport() {
       setCurrentHistoryId(null);
       setImportStartTime(null);
       setStep('history');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      console.error('Failed to import:', errorMessage);
-      
-      // Update history with failure
-      if (currentHistoryId && importStartTime) {
-        const failedItem = createHistoryItem(
-          config,
-          'failed',
-          selectedTables.length,
-          0,
-          [],
-          errorMessage,
-          Date.now() - importStartTime
-        );
-        failedItem.id = currentHistoryId;
-        saveConnectionHistory(failedItem);
-      }
-      
-      toast.error(`Import failed: ${errorMessage}`, { duration: 5000 });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -667,6 +495,71 @@ export default function DatabaseImport() {
           </button>
         )}
       </div>
+
+      {/* Active Import Job Status */}
+      {activeJob && (
+        <div className={`border rounded-lg p-4 ${
+          activeJob.status === 'completed' ? 'bg-green-50 border-green-200' :
+          activeJob.status === 'failed' ? 'bg-red-50 border-red-200' :
+          activeJob.status === 'cancelled' ? 'bg-gray-50 border-gray-200' :
+          'bg-blue-50 border-blue-200'
+        }`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className={`font-medium ${
+                activeJob.status === 'completed' ? 'text-green-900' :
+                activeJob.status === 'failed' ? 'text-red-900' :
+                activeJob.status === 'cancelled' ? 'text-gray-900' :
+                'text-blue-900'
+              }`}>
+                {activeJob.status === 'pending' ? 'Import Starting...' :
+                 activeJob.status === 'in_progress' ? 'Import In Progress' :
+                 activeJob.status === 'completed' ? 'Import Completed' :
+                 activeJob.status === 'failed' ? 'Import Failed' :
+                 'Import Cancelled'}
+              </h3>
+              <p className={`text-sm ${
+                activeJob.status === 'completed' ? 'text-green-700' :
+                activeJob.status === 'failed' ? 'text-red-700' :
+                activeJob.status === 'cancelled' ? 'text-gray-700' :
+                'text-blue-700'
+              }`}>
+                {activeJob.imported_tables} of {activeJob.total_tables} tables imported
+                {activeJob.failed_tables.length > 0 && ` (${activeJob.failed_tables.length} failed)`}
+              </p>
+              {activeJob.error_message && (
+                <p className="text-sm text-red-600 mt-1">{activeJob.error_message}</p>
+              )}
+            </div>
+            <div className="flex items-center space-x-3">
+              {isPolling && (
+                <div className="flex items-center space-x-2 text-blue-600">
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent"></div>
+                  <span className="text-sm">Processing...</span>
+                </div>
+              )}
+              {activeJob.status === 'in_progress' && (
+                <button
+                  onClick={() => cancelImportJob(activeJob.id)}
+                  className="text-sm text-red-600 hover:text-red-700 px-3 py-1 border border-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                >
+                  Cancel Import
+                </button>
+              )}
+            </div>
+          </div>
+          {activeJob.status === 'in_progress' && (
+            <div className="mt-3">
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${(activeJob.imported_tables / activeJob.total_tables) * 100}%` }}
+                ></div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Session Status */}
       {previewData && (
