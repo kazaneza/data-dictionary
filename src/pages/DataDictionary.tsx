@@ -36,6 +36,8 @@ interface TableType {
   description: string;
   totalFields: number;
   fields: FieldType[];
+  record_count?: number;
+  last_imported?: string;
 }
 
 interface FieldType {
@@ -634,14 +636,30 @@ function DataDictionary() {
                   <h3 className="font-semibold">{table.name}</h3>
                 </div>
                 <p className="text-sm text-gray-600 mb-3">{table.description}</p>
-                <div className="flex justify-between items-center">
-                  <div className="text-sm text-gray-500">
-                    {fields.filter(f => f.table_id === table.id).length} Fields
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-gray-500">
+                      {fields.filter(f => f.table_id === table.id).length} Fields
+                    </div>
+                    {table.category_id && (
+                      <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                        {categories.find(cat => cat.id === table.category_id)?.name}
+                      </span>
+                    )}
                   </div>
-                  {table.category_id && (
-                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                      {categories.find(cat => cat.id === table.category_id)?.name}
-                    </span>
+                  {table.record_count !== undefined && (
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-gray-500">Records:</span>
+                      <span className="font-medium text-gray-700">
+                        {table.record_count.toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+                  {table.last_imported && (
+                    <div className="flex justify-between items-center text-xs text-gray-400">
+                      <span>Last imported:</span>
+                      <span>{new Date(table.last_imported).toLocaleDateString()}</span>
+                    </div>
                   )}
                 </div>
               </div>
@@ -655,13 +673,29 @@ function DataDictionary() {
         <div className="bg-white rounded-lg shadow-md overflow-hidden">
           <div className="p-6">
             <div className="flex justify-between items-start mb-6">
-              <div>
+              <div className="flex-1">
                 <h3 className="text-xl font-semibold mb-2">
                   {getCurrentTable()?.name}
                 </h3>
-                <p className="text-gray-600">
+                <p className="text-gray-600 mb-3">
                   {getCurrentTable()?.description}
                 </p>
+                <div className="flex gap-4 text-sm text-gray-500">
+                  {getCurrentTable()?.record_count !== undefined && (
+                    <div>
+                      <span className="font-medium">Records:</span>{' '}
+                      <span className="text-gray-700">{getCurrentTable()?.record_count.toLocaleString()}</span>
+                    </div>
+                  )}
+                  {getCurrentTable()?.last_imported && (
+                    <div>
+                      <span className="font-medium">Last imported:</span>{' '}
+                      <span className="text-gray-700">
+                        {new Date(getCurrentTable()!.last_imported).toLocaleDateString()}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
               {getCurrentTable()?.category_id && (
                 <span className="text-sm bg-blue-100 text-blue-800 px-3 py-1 rounded-full">
