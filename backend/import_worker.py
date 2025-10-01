@@ -168,7 +168,9 @@ def process_import_job(job_id: str, db: Session):
         print(f"Job {job_id} completed: {imported_count} tables imported")
 
     except Exception as e:
+        import traceback
         print(f"Error processing job {job_id}: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
         job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
         if job:
             job.status = 'failed'
