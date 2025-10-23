@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
-import { Settings as SettingsIcon, LayoutDashboard, Database, FolderCog, LogOut, Link2, Search } from 'lucide-react';
+import { Settings as SettingsIcon, LayoutDashboard, Database, FolderCog, LogOut, Link2, Search, Sparkles } from 'lucide-react';
 import { Toaster } from 'react-hot-toast';
 import Dashboard from './pages/Dashboard';
 import DataDictionary from './pages/DataDictionary';
@@ -9,6 +9,7 @@ import Settings from './pages/Settings';
 import Manage from './pages/Manage';
 import Login from './pages/Login';
 import DatabaseImport from './pages/DatabaseImport';
+import AIFieldFinder from './components/AIFieldFinder';
 import { hasManageAccess, isAdmin } from './lib/api';
 
 function PrivateRoute({ children, requiresManage = false, requiresAdmin = false }: { 
@@ -124,6 +125,10 @@ function App() {
                   <Search className="h-4 w-4" />
                   <span>Search</span>
                 </NavLink>
+                <NavLink to="/ai-field-finder">
+                  <Sparkles className="h-4 w-4" />
+                  <span>AI Field Finder</span>
+                </NavLink>
                 <NavLink to="/manage" show={canManage}>
                   <FolderCog className="h-4 w-4" />
                   <span>Manage</span>
@@ -172,6 +177,14 @@ function App() {
               element={
                 <PrivateRoute>
                   <SearchPage />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/ai-field-finder"
+              element={
+                <PrivateRoute>
+                  <AIFieldFinder />
                 </PrivateRoute>
               }
             />

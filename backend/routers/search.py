@@ -257,19 +257,233 @@ async def get_search_filters(db: Session = Depends(get_db)):
     try:
         # Get unique source systems
         sources = db.query(SourceSystem.name).distinct().all()
-        
+
         # Get unique databases
         databases = db.query(Database.name).distinct().all()
-        
+
         # Get unique categories
         categories = db.query(Category.name).distinct().all()
-        
+
         return {
             "sources": [s[0] for s in sources],
             "databases": [d[0] for d in databases],
             "categories": [c[0] for c in categories]
         }
-        
+
     except Exception as e:
         logger.error(f"Error getting search filters: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class NaturalLanguageFieldRequest(BaseModel):
+    query: str
+    source_filter: Optional[str] = None
+    database_filter: Optional[str] = None
+    limit: Optional[int] = 20
+
+class FieldMatch(BaseModel):
+    id: str
+    name: str
+    description: Optional[str]
+    tableName: str
+    databaseName: str
+    sourceName: str
+    dataType: str
+    score: float
+    reason: str
+
+class NaturalLanguageFieldResponse(BaseModel):
+    query: str
+    interpretation: str
+    total: int
+    results: List[FieldMatch]
+
+@router.post("/search/natural-language-fields", response_model=NaturalLanguageFieldResponse)
+async def natural_language_field_search(
+    request: NaturalLanguageFieldRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Search for fields using natural language description.
+    Example: "I want a field for a customer legal document"
+    """
+    try:
+        # First, interpret the query using OpenAI to understand what the user is looking for
+        interpretation_prompt = f"""You are a data dictionary expert. A user is searching for database fields using natural language.
+
+User query: "{request.query}"
+
+Analyze this query and provide:
+1. What type of data the user is looking for
+2. Key concepts and terms to search for
+3. Related business domains
+
+Respond in JSON format:
+{{
+  "interpretation": "Brief explanation of what the user is looking for",
+  "keywords": ["keyword1", "keyword2", "keyword3"],
+  "domains": ["business domain1", "business domain2"]
+}}"""
+
+        interpretation_response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a data dictionary search expert specializing in understanding natural language queries about database fields."},
+                {"role": "user", "content": interpretation_prompt}
+            ],
+            max_tokens=500,
+            temperature=0.2
+        )
+
+        import json
+        interpretation_text = interpretation_response.choices[0].message.content.strip()
+        if "```json" in interpretation_text:
+            start = interpretation_text.find("```json") + 7
+            end = interpretation_text.find("```", start)
+            interpretation_text = interpretation_text[start:end].strip()
+
+        interpretation_data = json.loads(interpretation_text)
+        interpretation = interpretation_data.get("interpretation", "Searching for relevant fields")
+
+        # Build query to get all fields
+        query = db.query(
+            Field.id,
+            Field.name,
+            Field.description,
+            Field.type,
+            Table.name.label('table_name'),
+            Database.name.label('database_name'),
+            SourceSystem.name.label('source_name')
+        ).join(Table, Field.table_id == Table.id)\
+         .join(Database, Table.database_id == Database.id)\
+         .join(SourceSystem, Database.source_id == SourceSystem.id)
+
+        # Apply filters if provided
+        if request.source_filter:
+            query = query.filter(SourceSystem.name == request.source_filter)
+        if request.database_filter:
+            query = query.filter(Database.name == request.database_filter)
+
+        all_fields = query.all()
+
+        # Convert to dictionaries for AI processing
+        fields_data = []
+        for field in all_fields:
+            fields_data.append({
+                'id': str(field.id),
+                'name': field.name,
+                'description': field.description or 'No description',
+                'dataType': field.type,
+                'tableName': field.table_name,
+                'databaseName': field.database_name,
+                'sourceName': field.source_name
+            })
+
+        if not fields_data:
+            return NaturalLanguageFieldResponse(
+                query=request.query,
+                interpretation=interpretation,
+                total=0,
+                results=[]
+            )
+
+        # Use OpenAI to match fields to the query
+        fields_text = "\n".join([
+            f"{i+1}. {f['name']} ({f['dataType']}) in {f['tableName']}: {f['description']}"
+            for i, f in enumerate(fields_data[:500])  # Limit to prevent token overflow
+        ])
+
+        matching_prompt = f"""You are analyzing a natural language query to find matching database fields.
+
+User query: "{request.query}"
+Interpretation: {interpretation}
+
+Available fields (showing up to 500):
+{fields_text}
+
+Based on the query, identify the most relevant fields. Consider:
+- Semantic meaning of field names
+- Field descriptions and their relevance
+- Data types that match the query intent
+- Business context and domain relevance
+- Table context
+
+Return a JSON array with objects containing:
+- "index": the field number (1-based)
+- "score": relevance score from 0.0 to 1.0 (0.8+ for highly relevant, 0.6-0.8 for relevant, 0.4-0.6 for possibly relevant)
+- "reason": brief explanation of why this field matches
+
+Only include fields with score >= 0.4. Sort by score descending. Limit to top {request.limit} matches.
+
+Example:
+[
+  {{"index": 15, "score": 0.95, "reason": "CustomerLegalDocument field directly matches the requirement"}},
+  {{"index": 8, "score": 0.85, "reason": "DocumentType field is relevant for categorizing legal documents"}}
+]"""
+
+        matching_response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a database field matching expert. Analyze queries and match them to database fields based on semantic meaning and business context."},
+                {"role": "user", "content": matching_prompt}
+            ],
+            max_tokens=3000,
+            temperature=0.1
+        )
+
+        # Parse the AI response
+        response_content = matching_response.choices[0].message.content.strip()
+        logger.info(f"AI matching response: {response_content}")
+
+        if "```json" in response_content:
+            start = response_content.find("```json") + 7
+            end = response_content.find("```", start)
+            json_str = response_content[start:end].strip()
+        elif response_content.startswith('['):
+            json_str = response_content
+        else:
+            import re
+            json_match = re.search(r'\[.*\]', response_content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                logger.error(f"Could not extract JSON from response: {response_content}")
+                return NaturalLanguageFieldResponse(
+                    query=request.query,
+                    interpretation=interpretation,
+                    total=0,
+                    results=[]
+                )
+
+        matches = json.loads(json_str)
+
+        # Build result list
+        results = []
+        for match in matches[:request.limit]:
+            index = match["index"] - 1
+            if 0 <= index < len(fields_data):
+                field_data = fields_data[index]
+                results.append(FieldMatch(
+                    id=field_data['id'],
+                    name=field_data['name'],
+                    description=field_data['description'],
+                    tableName=field_data['tableName'],
+                    databaseName=field_data['databaseName'],
+                    sourceName=field_data['sourceName'],
+                    dataType=field_data['dataType'],
+                    score=match["score"],
+                    reason=match["reason"]
+                ))
+
+        return NaturalLanguageFieldResponse(
+            query=request.query,
+            interpretation=interpretation,
+            total=len(results),
+            results=results
+        )
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON from AI response: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to process AI response")
+    except Exception as e:
+        logger.error(f"Error in natural language field search: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
