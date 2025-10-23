@@ -378,27 +378,60 @@ Respond in JSON format:
             score = 0
             name_lower = field.name.lower()
             desc_lower = (field.description or '').lower()
+            table_lower = field.table_name.lower()
             query_lower = request.query.lower()
 
-            # Exact name match
-            if query_lower in name_lower:
-                score += 10
+            # Exact field name match (highest priority)
+            if query_lower == name_lower:
+                score += 50
 
-            # Check keywords
+            # Exact table name match (very high priority)
+            if query_lower == table_lower:
+                score += 40
+
+            # Partial field name match
+            if query_lower in name_lower:
+                score += 25
+
+            # Partial table name match (table context is very important)
+            if query_lower in table_lower:
+                score += 20
+
+            # Check keywords in field name (high priority)
             for keyword in keywords:
                 kw_lower = keyword.lower()
-                if kw_lower in name_lower:
-                    score += 5
-                if kw_lower in desc_lower:
-                    score += 2
+                if kw_lower == name_lower:
+                    score += 30
+                elif kw_lower in name_lower:
+                    score += 15
 
-            # Check query words
+                # Check keywords in table name (important context)
+                if kw_lower == table_lower:
+                    score += 25
+                elif kw_lower in table_lower:
+                    score += 12
+
+                # Check keywords in description
+                if kw_lower in desc_lower:
+                    score += 5
+
+            # Check query words in field name
             for word in query_lower.split():
                 if len(word) > 2:
-                    if word in name_lower:
-                        score += 3
+                    if word == name_lower:
+                        score += 20
+                    elif word in name_lower:
+                        score += 8
+
+                    # Check query words in table name
+                    if word == table_lower:
+                        score += 15
+                    elif word in table_lower:
+                        score += 7
+
+                    # Check query words in description
                     if word in desc_lower:
-                        score += 1
+                        score += 2
 
             return score
 
@@ -406,13 +439,34 @@ Respond in JSON format:
         scored_fields = [(field, keyword_score(field)) for field in all_fields]
         scored_fields.sort(key=lambda x: x[1], reverse=True)
 
-        # Take top 100 fields for AI analysis (prevents token overflow)
-        top_fields = [f for f, s in scored_fields[:100] if s > 0]
+        # Log top scoring fields for debugging
+        logger.info(f"Query: '{request.query}' | Total fields: {len(all_fields)}")
+        logger.info(f"Top 10 scored fields:")
+        for i, (field, score) in enumerate(scored_fields[:10]):
+            logger.info(f"  {i+1}. Score {score}: {field.table_name}.{field.name}")
 
-        # If no keyword matches, take a random sample
+        # Take top 150 fields for AI analysis (increased from 100)
+        top_fields = [f for f, s in scored_fields[:150] if s > 0]
+        logger.info(f"Sending {len(top_fields)} fields to AI for analysis")
+
+        # If no keyword matches, take fields from tables with relevant names
         if not top_fields:
-            import random
-            top_fields = random.sample(all_fields, min(50, len(all_fields)))
+            # Try to find tables with relevant names first
+            relevant_tables = []
+            query_lower = request.query.lower()
+            for field in all_fields:
+                table_lower = field.table_name.lower()
+                for word in query_lower.split():
+                    if len(word) > 3 and word in table_lower:
+                        relevant_tables.append(field)
+                        break
+
+            if relevant_tables:
+                top_fields = relevant_tables[:150]
+            else:
+                # Last resort: random sample
+                import random
+                top_fields = random.sample(all_fields, min(100, len(all_fields)))
 
         # Convert to dictionaries for AI processing
         fields_data = []
@@ -428,8 +482,9 @@ Respond in JSON format:
             })
 
         # Use OpenAI to match fields to the query with limited dataset
+        # Format: emphasize table name by putting it first
         fields_text = "\n".join([
-            f"{i+1}. {f['name']} ({f['dataType']}) in {f['tableName']}: {f['description'][:100]}"
+            f"{i+1}. Table: {f['tableName']} | Field: {f['name']} | Type: {f['dataType']} | Description: {f['description'][:80]}"
             for i, f in enumerate(fields_data)
         ])
 
@@ -441,24 +496,38 @@ Interpretation: {interpretation}
 Pre-filtered candidate fields ({len(fields_data)} total):
 {fields_text}
 
-Based on the query, identify the most relevant fields. Consider:
-- Semantic meaning of field names
-- Field descriptions and their relevance
-- Data types that match the query intent
-- Business context and domain relevance
-- Table context
+IMPORTANT MATCHING RULES:
+1. Table names are CRITICAL context - if the table name matches the query, ALL fields in that table are likely relevant
+2. Field names that match query keywords should score highly
+3. Consider the combination of table name + field name (e.g., "Customers" table + "LegalDocument" field)
+4. Exact or close matches in field/table names are more important than description matches
+5. Common database patterns: ID fields, foreign keys, status fields, date fields are often what users need
+
+Based on the query, identify the most relevant fields. Consider IN THIS ORDER:
+1. Table name relevance (HIGHEST PRIORITY)
+2. Field name relevance
+3. Combined table + field name context
+4. Data type appropriateness
+5. Description content
+6. Business domain context
 
 Return a JSON array with objects containing:
 - "index": the field number (1-based)
-- "score": relevance score from 0.0 to 1.0 (0.8+ for highly relevant, 0.6-0.8 for relevant, 0.4-0.6 for possibly relevant)
-- "reason": brief explanation (max 50 words)
+- "score": relevance score from 0.0 to 1.0
+  - 0.95-1.0: Perfect match (table or field name directly matches query)
+  - 0.85-0.94: Excellent match (strong table context + relevant field)
+  - 0.7-0.84: Good match (table or field name contains query terms)
+  - 0.5-0.69: Moderate match (related context)
+  - 0.4-0.49: Weak match (description mentions query terms)
+- "reason": brief explanation focusing on why table/field names match (max 40 words)
 
-Only include fields with score >= 0.4. Sort by score descending. Limit to top {min(request.limit, 20)} matches.
+Only include fields with score >= 0.4. Sort by score descending. Return top {min(request.limit, 20)} matches.
 
 Example:
 [
-  {{"index": 15, "score": 0.95, "reason": "CustomerLegalDocument field directly matches the requirement"}},
-  {{"index": 8, "score": 0.85, "reason": "DocumentType field is relevant for categorizing legal documents"}}
+  {{"index": 15, "score": 0.98, "reason": "CustomerDocuments table with DocumentType field - exact match for customer documents"}},
+  {{"index": 8, "score": 0.92, "reason": "Customers table with LegalDoc field - directly stores customer legal documentation"}},
+  {{"index": 3, "score": 0.75, "reason": "Documents table with CustomerID field - links documents to customers"}}
 ]"""
 
         matching_response = client.chat.completions.create(
