@@ -9,6 +9,8 @@ import {
   CheckCircle,
   Filter,
   X,
+  Key,
+  Info,
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
@@ -22,6 +24,9 @@ interface FieldMatch {
   dataType: string;
   score: number;
   reason: string;
+  metadata_confidence?: string;
+  is_primary_key?: boolean;
+  is_nullable?: boolean;
 }
 
 interface AIFieldFinderResponse {
@@ -374,7 +379,7 @@ export default function AIFieldFinder() {
                     </p>
                   </div>
 
-                  <div className="flex items-center space-x-2 text-sm text-gray-500">
+                  <div className="flex items-center flex-wrap gap-2 text-sm text-gray-500">
                     <span className="px-2 py-1 bg-gray-100 rounded-full">
                       {field.sourceName}
                     </span>
@@ -386,6 +391,34 @@ export default function AIFieldFinder() {
                     <span className="px-2 py-1 bg-purple-50 text-purple-700 rounded-full">
                       {field.dataType}
                     </span>
+                    {field.is_primary_key && (
+                      <>
+                        <span>•</span>
+                        <span className="px-2 py-1 bg-amber-50 text-amber-700 rounded-full flex items-center gap-1">
+                          <Key className="h-3 w-3" />
+                          Primary Key
+                        </span>
+                      </>
+                    )}
+                    {field.metadata_confidence && (
+                      <>
+                        <span>•</span>
+                        <span className={`px-2 py-1 rounded-full flex items-center gap-1 ${
+                          field.metadata_confidence === 'high'
+                            ? 'bg-green-50 text-green-700'
+                            : field.metadata_confidence === 'medium'
+                            ? 'bg-yellow-50 text-yellow-700'
+                            : 'bg-gray-50 text-gray-600'
+                        }`}>
+                          <Info className="h-3 w-3" />
+                          {field.metadata_confidence === 'high'
+                            ? 'Well Documented'
+                            : field.metadata_confidence === 'medium'
+                            ? 'Partial Docs'
+                            : 'Limited Docs'}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}

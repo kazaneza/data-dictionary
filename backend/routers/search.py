@@ -290,6 +290,9 @@ class FieldMatch(BaseModel):
     dataType: str
     score: float
     reason: str
+    metadata_confidence: Optional[str] = "unknown"  # high/medium/low/unknown
+    is_primary_key: Optional[bool] = False
+    is_nullable: Optional[bool] = True
 
 class NaturalLanguageFieldResponse(BaseModel):
     query: str
@@ -309,29 +312,50 @@ async def natural_language_field_search(
     try:
         import json
 
-        # First, interpret the query using OpenAI to extract keywords
-        interpretation_prompt = f"""You are a data dictionary expert. A user is searching for database fields using natural language.
+        # First, interpret the query using OpenAI to extract precise intent
+        interpretation_prompt = f"""You are a database search expert analyzing a query for semantic field matching.
 
 User query: "{request.query}"
 
-Analyze this query and provide:
-1. What type of data the user is looking for
-2. Key concepts and terms to search for (5-10 keywords that would appear in field names or descriptions)
+Extract the PRECISE business concept and related terms:
+
+1. Core Concept: The exact business meaning (e.g., "employment status" not just "status")
+2. Primary Keywords: Specific terms and word stems that define this concept (5-8 keywords)
+3. Related Terms: Synonyms, variants, and domain-specific jargon (3-5 terms)
+4. Exclusion Keywords: Generic terms that could cause false matches (e.g., if looking for "employment status", exclude generic "status", "active", "inactive" unless combined with employment context)
+5. Primary Entities: What database objects would likely store this (e.g., "Customer", "Employee", "Account")
+6. Secondary Entities: Related objects that might reference this indirectly
 
 Respond in JSON format:
 {{
-  "interpretation": "Brief explanation of what the user is looking for",
-  "keywords": ["keyword1", "keyword2", "keyword3"]
+  "interpretation": "Precise business concept explanation",
+  "core_concept": "exact_concept_name",
+  "primary_keywords": ["specific_term1", "specific_term2"],
+  "related_terms": ["synonym1", "variant1"],
+  "exclusion_keywords": ["generic_term1", "confusing_term1"],
+  "primary_entities": ["EntityName1", "EntityName2"],
+  "secondary_entities": ["RelatedEntity1"]
+}}
+
+Example for "customer employment status":
+{{
+  "interpretation": "Customer's current employment classification and job status",
+  "core_concept": "employment_status",
+  "primary_keywords": ["employment", "employ", "job", "work", "occupation", "profession", "career"],
+  "related_terms": ["employed", "employer", "employee", "occupation_type", "work_status"],
+  "exclusion_keywords": ["account_status", "loan_status", "application_status", "marital_status", "address_status"],
+  "primary_entities": ["Customer", "Client", "Borrower", "Applicant"],
+  "secondary_entities": ["Employment", "Income", "Occupation"]
 }}"""
 
         interpretation_response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a data dictionary search expert specializing in understanding natural language queries about database fields."},
+                {"role": "system", "content": "You are a data dictionary search expert specializing in precise semantic analysis of database field queries. Focus on specificity over generality."},
                 {"role": "user", "content": interpretation_prompt}
             ],
-            max_tokens=300,
-            temperature=0.2
+            max_tokens=500,
+            temperature=0.1
         )
 
         interpretation_text = interpretation_response.choices[0].message.content.strip()
@@ -342,14 +366,29 @@ Respond in JSON format:
 
         interpretation_data = json.loads(interpretation_text)
         interpretation = interpretation_data.get("interpretation", "Searching for relevant fields")
-        keywords = interpretation_data.get("keywords", [])
+        core_concept = interpretation_data.get("core_concept", "")
+        primary_keywords = interpretation_data.get("primary_keywords", [])
+        related_terms = interpretation_data.get("related_terms", [])
+        exclusion_keywords = [x.lower() for x in interpretation_data.get("exclusion_keywords", [])]
+        primary_entities = [x.lower() for x in interpretation_data.get("primary_entities", [])]
+        secondary_entities = [x.lower() for x in interpretation_data.get("secondary_entities", [])]
 
-        # Build query to get all fields
+        # Combine for keyword matching
+        all_keywords = primary_keywords + related_terms
+
+        logger.info(f"Intent Analysis - Core: {core_concept}")
+        logger.info(f"Primary Keywords: {primary_keywords}")
+        logger.info(f"Exclusions: {exclusion_keywords}")
+        logger.info(f"Primary Entities: {primary_entities}")
+
+        # Build query to get all fields with metadata
         query = db.query(
             Field.id,
             Field.name,
             Field.description,
             Field.type,
+            Field.is_primary_key,
+            Field.nullable,
             Table.name.label('table_name'),
             Database.name.label('database_name'),
             SourceSystem.name.label('source_name')
@@ -373,70 +412,147 @@ Respond in JSON format:
                 results=[]
             )
 
-        # Pre-filter fields using keyword matching to reduce dataset
-        def keyword_score(field):
+        # Advanced scoring with intent focus, entity scoping, and exclusion logic
+        def advanced_keyword_score(field):
             score = 0
+            penalties = 0
+
             name_lower = field.name.lower()
             desc_lower = (field.description or '').lower()
             table_lower = field.table_name.lower()
-            query_lower = request.query.lower()
 
-            # Exact field name match (highest priority)
-            if query_lower == name_lower:
-                score += 50
+            # Combine field and table for compound matching
+            full_context = f"{table_lower}.{name_lower} {desc_lower}"
 
-            # Exact table name match (very high priority)
-            if query_lower == table_lower:
-                score += 40
+            # === EXCLUSION LOGIC (check first, apply penalties) ===
+            exclusion_found = False
+            for exclusion in exclusion_keywords:
+                # Only penalize if exclusion term appears WITHOUT primary keywords
+                if exclusion in full_context:
+                    # Check if any primary keyword is nearby to provide context
+                    has_context = False
+                    for pk in primary_keywords:
+                        if pk.lower() in full_context:
+                            has_context = True
+                            break
 
-            # Partial field name match
-            if query_lower in name_lower:
-                score += 25
+                    if not has_context:
+                        penalties += 30
+                        exclusion_found = True
+                        logger.debug(f"Exclusion penalty for {table_lower}.{name_lower}: found '{exclusion}' without context")
 
-            # Partial table name match (table context is very important)
-            if query_lower in table_lower:
-                score += 20
+            # === ENTITY SCOPING (prioritize primary entities) ===
+            entity_boost = 0
+            for entity in primary_entities:
+                if entity in table_lower:
+                    entity_boost += 40  # Strong boost for primary entity tables
+                    logger.debug(f"Primary entity boost for {table_lower}: matched '{entity}'")
+                elif entity in name_lower:
+                    entity_boost += 20  # Moderate boost for entity in field name
 
-            # Check keywords in field name (high priority)
-            for keyword in keywords:
+            for entity in secondary_entities:
+                if entity in table_lower:
+                    entity_boost += 15  # Smaller boost for secondary entities
+                elif entity in name_lower:
+                    entity_boost += 8
+
+            score += entity_boost
+
+            # === CORE CONCEPT MATCHING (highest priority) ===
+            if core_concept:
+                core_lower = core_concept.lower()
+                # Exact match in field name
+                if core_lower == name_lower or core_lower.replace('_', '') == name_lower.replace('_', ''):
+                    score += 100  # Perfect match
+                    logger.debug(f"EXACT core concept match: {name_lower}")
+                # Field name contains core concept
+                elif core_lower in name_lower:
+                    score += 60
+                # Core concept in table.field combination
+                elif core_lower in f"{table_lower}_{name_lower}":
+                    score += 50
+                # Core concept in description
+                elif core_lower in desc_lower:
+                    score += 20
+
+            # === PRIMARY KEYWORDS (multi-word presence = compound boost) ===
+            primary_matches = 0
+            primary_match_positions = []
+
+            for idx, keyword in enumerate(primary_keywords):
                 kw_lower = keyword.lower()
-                if kw_lower == name_lower:
-                    score += 30
+
+                # Prefix matching (employ matches employment, employed)
+                if name_lower.startswith(kw_lower) or f"_{kw_lower}" in name_lower:
+                    score += 45
+                    primary_matches += 1
+                    primary_match_positions.append('field_prefix')
+                # Exact word in field name
+                elif kw_lower == name_lower or f"_{kw_lower}_" in name_lower or name_lower.endswith(f"_{kw_lower}"):
+                    score += 40
+                    primary_matches += 1
+                    primary_match_positions.append('field_exact')
+                # Substring in field name
                 elif kw_lower in name_lower:
-                    score += 15
-
-                # Check keywords in table name (important context)
-                if kw_lower == table_lower:
                     score += 25
-                elif kw_lower in table_lower:
-                    score += 12
+                    primary_matches += 1
+                    primary_match_positions.append('field_substring')
 
-                # Check keywords in description
+                # Table name matches (crucial context)
+                if kw_lower in table_lower:
+                    score += 30
+                    primary_matches += 1
+                    primary_match_positions.append('table')
+
+                # Description matches (lower weight)
                 if kw_lower in desc_lower:
+                    score += 8
+
+            # Compound keyword bonus (multiple keywords present = higher confidence)
+            if primary_matches >= 2:
+                score += 30 * (primary_matches - 1)  # Exponential boost
+                logger.debug(f"Compound keyword bonus for {name_lower}: {primary_matches} keywords")
+
+            # === RELATED TERMS (synonym matching) ===
+            for term in related_terms:
+                term_lower = term.lower()
+                if term_lower in name_lower:
+                    score += 15
+                elif term_lower in table_lower:
+                    score += 12
+                elif term_lower in desc_lower:
                     score += 5
 
-            # Check query words in field name
-            for word in query_lower.split():
-                if len(word) > 2:
-                    if word == name_lower:
-                        score += 20
-                    elif word in name_lower:
-                        score += 8
+            # === RANKING FRAMEWORK BOOSTS ===
+            # Boost for exact prefix matches on compound fields
+            if any(name_lower.startswith(pk.lower()) for pk in primary_keywords):
+                score += 20
 
-                    # Check query words in table name
-                    if word == table_lower:
-                        score += 15
-                    elif word in table_lower:
-                        score += 7
+            # Boost for underscore-separated exact word matches
+            name_parts = name_lower.split('_')
+            for pk in primary_keywords:
+                if pk.lower() in name_parts:
+                    score += 15
 
-                    # Check query words in description
-                    if word in desc_lower:
-                        score += 2
+            # === PENALTIES FOR NEAR-MISSES ===
+            # Penalize generic single-word matches without entity context
+            if len(primary_keywords) == 1 and primary_matches == 1 and entity_boost == 0:
+                penalties += 20
+                logger.debug(f"Generic match penalty for {name_lower}")
 
-            return score
+            # Penalize if description match only (no name/table match)
+            if score > 0 and score == sum([8 for term in primary_keywords if term.lower() in desc_lower]):
+                penalties += 15
 
-        # Score and filter fields
-        scored_fields = [(field, keyword_score(field)) for field in all_fields]
+            final_score = max(0, score - penalties)
+
+            if final_score > 0:
+                logger.debug(f"Score {final_score} for {table_lower}.{name_lower} (base: {score}, penalties: {penalties})")
+
+            return final_score
+
+        # Score and filter fields using advanced scoring
+        scored_fields = [(field, advanced_keyword_score(field)) for field in all_fields]
         scored_fields.sort(key=lambda x: x[1], reverse=True)
 
         # Log top scoring fields for debugging
@@ -468,9 +584,18 @@ Respond in JSON format:
                 import random
                 top_fields = random.sample(all_fields, min(100, len(all_fields)))
 
-        # Convert to dictionaries for AI processing
+        # Convert to dictionaries for AI processing with metadata
         fields_data = []
         for field in top_fields:
+            # Calculate metadata confidence
+            metadata_confidence = "unknown"
+            if field.description and len(field.description) > 20:
+                metadata_confidence = "high"
+            elif field.description and len(field.description) > 5:
+                metadata_confidence = "medium"
+            else:
+                metadata_confidence = "low"
+
             fields_data.append({
                 'id': str(field.id),
                 'name': field.name,
@@ -478,7 +603,10 @@ Respond in JSON format:
                 'dataType': field.type,
                 'tableName': field.table_name,
                 'databaseName': field.database_name,
-                'sourceName': field.source_name
+                'sourceName': field.source_name,
+                'is_primary_key': field.is_primary_key or False,
+                'is_nullable': field.nullable if field.nullable is not None else True,
+                'metadata_confidence': metadata_confidence
             })
 
         # Use OpenAI to match fields to the query with limited dataset
@@ -488,46 +616,54 @@ Respond in JSON format:
             for i, f in enumerate(fields_data)
         ])
 
-        matching_prompt = f"""You are analyzing a natural language query to find matching database fields.
+        matching_prompt = f"""You are a precision database field matching expert analyzing pre-scored candidates.
 
-User query: "{request.query}"
+SEARCH INTENT:
+Query: "{request.query}"
+Core Concept: {core_concept}
 Interpretation: {interpretation}
 
-Pre-filtered candidate fields ({len(fields_data)} total):
+PRIMARY KEYWORDS (must match): {', '.join(primary_keywords)}
+EXCLUSION TERMS (penalize if present alone): {', '.join(exclusion_keywords)}
+PRIMARY ENTITIES (authoritative sources): {', '.join(primary_entities)}
+SECONDARY ENTITIES (supporting context): {', '.join(secondary_entities)}
+
+Pre-filtered candidate fields ({len(fields_data)} total - already scored for relevance):
 {fields_text}
 
-IMPORTANT MATCHING RULES:
-1. Table names are CRITICAL context - if the table name matches the query, ALL fields in that table are likely relevant
-2. Field names that match query keywords should score highly
-3. Consider the combination of table name + field name (e.g., "Customers" table + "LegalDocument" field)
-4. Exact or close matches in field/table names are more important than description matches
-5. Common database patterns: ID fields, foreign keys, status fields, date fields are often what users need
+CRITICAL MATCHING RULES:
+1. INTENT LOCK: Fields must match the CORE CONCEPT ({core_concept}), not just generic terms
+2. ENTITY SCOPING: Strongly prefer fields from PRIMARY ENTITIES tables ({', '.join(primary_entities)})
+3. COMPOUND MATCHING: Field+Table combinations (e.g., "Customer.EmploymentStatus") score higher than partial matches
+4. EXCLUSION FILTER: Penalize fields containing exclusion terms unless primary keywords provide context
+5. DISAMBIGUATION: Distinguish base entities from derived/secondary forms (e.g., primary customer vs co-applicant)
 
-Based on the query, identify the most relevant fields. Consider IN THIS ORDER:
-1. Table name relevance (HIGHEST PRIORITY)
-2. Field name relevance
-3. Combined table + field name context
-4. Data type appropriateness
-5. Description content
-6. Business domain context
+RANKING PRIORITIES (in order):
+1. Exact match on core concept in primary entity table (Score: 0.95-1.0)
+2. Field name contains core concept + primary entity table (Score: 0.85-0.94)
+3. Multiple primary keywords in table.field combination (Score: 0.75-0.84)
+4. Single primary keyword + primary entity context (Score: 0.65-0.74)
+5. Related terms in primary entity context (Score: 0.50-0.64)
+6. Weak matches in secondary entities (Score: 0.40-0.49)
+
+PENALIZE:
+- Fields with exclusion terms but no primary keyword context (-0.3 to score)
+- Generic field names without entity scoping (-0.2 to score)
+- Fields from unrelated entities or schemas (-0.2 to score)
+- Description-only matches with no name relevance (-0.15 to score)
 
 Return a JSON array with objects containing:
 - "index": the field number (1-based)
-- "score": relevance score from 0.0 to 1.0
-  - 0.95-1.0: Perfect match (table or field name directly matches query)
-  - 0.85-0.94: Excellent match (strong table context + relevant field)
-  - 0.7-0.84: Good match (table or field name contains query terms)
-  - 0.5-0.69: Moderate match (related context)
-  - 0.4-0.49: Weak match (description mentions query terms)
-- "reason": brief explanation focusing on why table/field names match (max 40 words)
+- "score": precision-adjusted relevance score from 0.0 to 1.0
+- "reason": explanation citing specific matches to core concept, keywords, and entity context (max 50 words)
 
-Only include fields with score >= 0.4. Sort by score descending. Return top {min(request.limit, 20)} matches.
+Only include fields with score >= 0.5 (stricter threshold). Sort by score descending. Return top {min(request.limit, 15)} matches.
 
 Example:
 [
-  {{"index": 15, "score": 0.98, "reason": "CustomerDocuments table with DocumentType field - exact match for customer documents"}},
-  {{"index": 8, "score": 0.92, "reason": "Customers table with LegalDoc field - directly stores customer legal documentation"}},
-  {{"index": 3, "score": 0.75, "reason": "Documents table with CustomerID field - links documents to customers"}}
+  {{"index": 12, "score": 0.98, "reason": "Customer.EmploymentStatus - exact core concept match in primary entity table"}},
+  {{"index": 5, "score": 0.88, "reason": "Customer.EmploymentType - contains 'employment' primary keyword in Customer entity"}},
+  {{"index": 23, "score": 0.72, "reason": "Employment.CustomerID - links employment data to customer entity"}}
 ]"""
 
         matching_response = client.chat.completions.create(
@@ -566,7 +702,7 @@ Example:
 
         matches = json.loads(json_str)
 
-        # Build result list
+        # Build result list with metadata
         results = []
         for match in matches[:request.limit]:
             index = match["index"] - 1
@@ -581,7 +717,10 @@ Example:
                     sourceName=field_data['sourceName'],
                     dataType=field_data['dataType'],
                     score=match["score"],
-                    reason=match["reason"]
+                    reason=match["reason"],
+                    metadata_confidence=field_data['metadata_confidence'],
+                    is_primary_key=field_data['is_primary_key'],
+                    is_nullable=field_data['is_nullable']
                 ))
 
         return NaturalLanguageFieldResponse(
