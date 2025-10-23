@@ -307,21 +307,21 @@ async def natural_language_field_search(
     Example: "I want a field for a customer legal document"
     """
     try:
-        # First, interpret the query using OpenAI to understand what the user is looking for
+        import json
+
+        # First, interpret the query using OpenAI to extract keywords
         interpretation_prompt = f"""You are a data dictionary expert. A user is searching for database fields using natural language.
 
 User query: "{request.query}"
 
 Analyze this query and provide:
 1. What type of data the user is looking for
-2. Key concepts and terms to search for
-3. Related business domains
+2. Key concepts and terms to search for (5-10 keywords that would appear in field names or descriptions)
 
 Respond in JSON format:
 {{
   "interpretation": "Brief explanation of what the user is looking for",
-  "keywords": ["keyword1", "keyword2", "keyword3"],
-  "domains": ["business domain1", "business domain2"]
+  "keywords": ["keyword1", "keyword2", "keyword3"]
 }}"""
 
         interpretation_response = client.chat.completions.create(
@@ -330,11 +330,10 @@ Respond in JSON format:
                 {"role": "system", "content": "You are a data dictionary search expert specializing in understanding natural language queries about database fields."},
                 {"role": "user", "content": interpretation_prompt}
             ],
-            max_tokens=500,
+            max_tokens=300,
             temperature=0.2
         )
 
-        import json
         interpretation_text = interpretation_response.choices[0].message.content.strip()
         if "```json" in interpretation_text:
             start = interpretation_text.find("```json") + 7
@@ -343,6 +342,7 @@ Respond in JSON format:
 
         interpretation_data = json.loads(interpretation_text)
         interpretation = interpretation_data.get("interpretation", "Searching for relevant fields")
+        keywords = interpretation_data.get("keywords", [])
 
         # Build query to get all fields
         query = db.query(
@@ -365,9 +365,58 @@ Respond in JSON format:
 
         all_fields = query.all()
 
+        if not all_fields:
+            return NaturalLanguageFieldResponse(
+                query=request.query,
+                interpretation=interpretation,
+                total=0,
+                results=[]
+            )
+
+        # Pre-filter fields using keyword matching to reduce dataset
+        def keyword_score(field):
+            score = 0
+            name_lower = field.name.lower()
+            desc_lower = (field.description or '').lower()
+            query_lower = request.query.lower()
+
+            # Exact name match
+            if query_lower in name_lower:
+                score += 10
+
+            # Check keywords
+            for keyword in keywords:
+                kw_lower = keyword.lower()
+                if kw_lower in name_lower:
+                    score += 5
+                if kw_lower in desc_lower:
+                    score += 2
+
+            # Check query words
+            for word in query_lower.split():
+                if len(word) > 2:
+                    if word in name_lower:
+                        score += 3
+                    if word in desc_lower:
+                        score += 1
+
+            return score
+
+        # Score and filter fields
+        scored_fields = [(field, keyword_score(field)) for field in all_fields]
+        scored_fields.sort(key=lambda x: x[1], reverse=True)
+
+        # Take top 100 fields for AI analysis (prevents token overflow)
+        top_fields = [f for f, s in scored_fields[:100] if s > 0]
+
+        # If no keyword matches, take a random sample
+        if not top_fields:
+            import random
+            top_fields = random.sample(all_fields, min(50, len(all_fields)))
+
         # Convert to dictionaries for AI processing
         fields_data = []
-        for field in all_fields:
+        for field in top_fields:
             fields_data.append({
                 'id': str(field.id),
                 'name': field.name,
@@ -378,18 +427,10 @@ Respond in JSON format:
                 'sourceName': field.source_name
             })
 
-        if not fields_data:
-            return NaturalLanguageFieldResponse(
-                query=request.query,
-                interpretation=interpretation,
-                total=0,
-                results=[]
-            )
-
-        # Use OpenAI to match fields to the query
+        # Use OpenAI to match fields to the query with limited dataset
         fields_text = "\n".join([
-            f"{i+1}. {f['name']} ({f['dataType']}) in {f['tableName']}: {f['description']}"
-            for i, f in enumerate(fields_data[:500])  # Limit to prevent token overflow
+            f"{i+1}. {f['name']} ({f['dataType']}) in {f['tableName']}: {f['description'][:100]}"
+            for i, f in enumerate(fields_data)
         ])
 
         matching_prompt = f"""You are analyzing a natural language query to find matching database fields.
@@ -397,7 +438,7 @@ Respond in JSON format:
 User query: "{request.query}"
 Interpretation: {interpretation}
 
-Available fields (showing up to 500):
+Pre-filtered candidate fields ({len(fields_data)} total):
 {fields_text}
 
 Based on the query, identify the most relevant fields. Consider:
@@ -410,9 +451,9 @@ Based on the query, identify the most relevant fields. Consider:
 Return a JSON array with objects containing:
 - "index": the field number (1-based)
 - "score": relevance score from 0.0 to 1.0 (0.8+ for highly relevant, 0.6-0.8 for relevant, 0.4-0.6 for possibly relevant)
-- "reason": brief explanation of why this field matches
+- "reason": brief explanation (max 50 words)
 
-Only include fields with score >= 0.4. Sort by score descending. Limit to top {request.limit} matches.
+Only include fields with score >= 0.4. Sort by score descending. Limit to top {min(request.limit, 20)} matches.
 
 Example:
 [
@@ -426,7 +467,7 @@ Example:
                 {"role": "system", "content": "You are a database field matching expert. Analyze queries and match them to database fields based on semantic meaning and business context."},
                 {"role": "user", "content": matching_prompt}
             ],
-            max_tokens=3000,
+            max_tokens=2000,
             temperature=0.1
         )
 
