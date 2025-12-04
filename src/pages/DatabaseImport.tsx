@@ -498,14 +498,14 @@ export default function DatabaseImport() {
 
       {/* Active Import Job Status */}
       {activeJob && (
-        <div className={`border rounded-lg p-4 ${
+        <div className={`border rounded-lg p-4 mb-4 ${
           activeJob.status === 'completed' ? 'bg-green-50 border-green-200' :
           activeJob.status === 'failed' ? 'bg-red-50 border-red-200' :
           activeJob.status === 'cancelled' ? 'bg-gray-50 border-gray-200' :
           'bg-blue-50 border-blue-200'
         }`}>
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex-1 min-w-0">
               <h3 className={`font-medium ${
                 activeJob.status === 'completed' ? 'text-green-900' :
                 activeJob.status === 'failed' ? 'text-red-900' :
@@ -531,7 +531,7 @@ export default function DatabaseImport() {
                 <p className="text-sm text-red-600 mt-1">{activeJob.error_message}</p>
               )}
             </div>
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-3 flex-shrink-0">
               {isPolling && (
                 <div className="flex items-center space-x-2 text-blue-600">
                   <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent"></div>
@@ -540,8 +540,12 @@ export default function DatabaseImport() {
               )}
               {(activeJob.status === 'in_progress' || activeJob.status === 'pending') && (
                 <button
-                  onClick={() => cancelImportJob(activeJob.id)}
-                  className="text-sm text-red-600 hover:text-red-700 px-3 py-1 border border-red-600 rounded-lg hover:bg-red-50 transition-colors font-medium"
+                  onClick={() => {
+                    if (window.confirm('Are you sure you want to cancel this import?')) {
+                      cancelImportJob(activeJob.id);
+                    }
+                  }}
+                  className="bg-red-600 text-white hover:bg-red-700 px-4 py-2 rounded-lg transition-colors font-medium text-sm shadow-sm"
                 >
                   Cancel Import
                 </button>
