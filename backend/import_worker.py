@@ -31,7 +31,17 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-BACKEND_URL = 'http://localhost:8000'
+# Dynamic BACKEND_URL configuration
+# Priority: 1. Environment variable, 2. Default to localhost
+def get_backend_url():
+    backend_url = os.getenv("BACKEND_URL") or os.getenv("VITE_API_URL")
+    if backend_url:
+        return backend_url.rstrip('/')  # Remove trailing slash if present
+    # Default to localhost for local development
+    return 'http://localhost:8000'
+
+BACKEND_URL = get_backend_url()
+print(f"Worker using BACKEND_URL: {BACKEND_URL}")
 
 def process_import_job(job_id: str, db: Session):
     """Process a single import job"""
@@ -93,13 +103,17 @@ def process_import_job(job_id: str, db: Session):
 
                 # Get schema (fast, no AI) - exclude selected_tables from config spread
                 config_for_api = {k: v for k, v in config.items() if k != 'selected_tables'}
-                schema_response = requests.post(
-                    f"{BACKEND_URL}/api/database/schema",
-                    json={**config_for_api, 'tableName': table_name},
-                    timeout=60  # Should be fast now without AI
-                )
-                schema_response.raise_for_status()
-                schema_data = schema_response.json()
+                try:
+                    schema_response = requests.post(
+                        f"{BACKEND_URL}/api/database/schema",
+                        json={**config_for_api, 'tableName': table_name},
+                        timeout=60  # Should be fast now without AI
+                    )
+                    schema_response.raise_for_status()
+                    schema_data = schema_response.json()
+                except requests.exceptions.RequestException as e:
+                    print(f"Failed to connect to backend API at {BACKEND_URL}: {e}")
+                    raise Exception(f"Backend API unavailable: {str(e)}")
 
                 # Get source system info for AI context
                 source_system = db.query(SourceSystem).filter(SourceSystem.id == config.get('source_id')).first()
@@ -170,11 +184,10 @@ def process_import_job(job_id: str, db: Session):
                 imported_count += 1
                 print(f"Imported table {table_name} ({imported_count}/{len(selected_tables)})")
 
-                # Update progress every 5 tables
-                if imported_count % 5 == 0:
-                    job.imported_tables = imported_count
-                    job.updated_at = datetime.utcnow()
-                    db.commit()
+                # Update progress after each table (for better UX)
+                job.imported_tables = imported_count
+                job.updated_at = datetime.utcnow()
+                db.commit()
 
             except Exception as e:
                 print(f"Failed to import table {table_name}: {e}")

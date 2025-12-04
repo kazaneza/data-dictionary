@@ -22,6 +22,9 @@ export function useImportJob() {
   const [isPolling, setIsPolling] = useState(false);
   const pollingIntervalRef = useRef<number | null>(null);
   const isLoggedOutRef = useRef(false);
+  const pollingStartTimeRef = useRef<number | null>(null);
+  const MAX_POLLING_TIME = 24 * 60 * 60 * 1000; // 24 hours max polling time
+  const STALE_JOB_THRESHOLD = 2 * 60 * 60 * 1000; // 2 hours - if job hasn't updated, consider it stuck
 
   const checkForActiveJobs = async () => {
     try {
@@ -91,6 +94,11 @@ export function useImportJob() {
 
       setActiveJob(null);
       setIsPolling(false);
+      pollingStartTimeRef.current = null;
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
       toast('Import cancelled');
     } catch (error) {
       console.error('Error cancelling import job:', error);
@@ -109,14 +117,50 @@ export function useImportJob() {
 
   useEffect(() => {
     if (isPolling && activeJob) {
+      // Record when polling started
+      if (!pollingStartTimeRef.current) {
+        pollingStartTimeRef.current = Date.now();
+      }
+
       pollingIntervalRef.current = window.setInterval(async () => {
         const updatedJob = await fetchJobStatus(activeJob.id);
 
         if (updatedJob) {
           setActiveJob(updatedJob);
 
+          // Check if job is stuck (hasn't been updated in a while)
+          if (updatedJob.updated_at) {
+            const lastUpdate = new Date(updatedJob.updated_at).getTime();
+            const timeSinceUpdate = Date.now() - lastUpdate;
+            
+            if (timeSinceUpdate > STALE_JOB_THRESHOLD && 
+                ['pending', 'in_progress'].includes(updatedJob.status)) {
+              console.warn('Job appears to be stuck - no updates for', Math.round(timeSinceUpdate / 60000), 'minutes');
+              toast('Import appears to be stuck. Please check the worker process.', {
+                duration: 5000,
+                icon: '⚠️',
+              });
+            }
+          }
+
+          // Check if we've been polling too long
+          if (pollingStartTimeRef.current) {
+            const pollingDuration = Date.now() - pollingStartTimeRef.current;
+            if (pollingDuration > MAX_POLLING_TIME) {
+              console.warn('Polling timeout reached');
+              setIsPolling(false);
+              pollingStartTimeRef.current = null;
+              toast('Import is taking longer than expected. Please check manually.', {
+                duration: 5000,
+                icon: '⏱️',
+              });
+              return;
+            }
+          }
+
           if (['completed', 'failed', 'cancelled'].includes(updatedJob.status)) {
             setIsPolling(false);
+            pollingStartTimeRef.current = null;
 
             if (updatedJob.status === 'completed') {
               toast.success(`Import completed! ${updatedJob.imported_tables}/${updatedJob.total_tables} tables imported`, {
@@ -128,14 +172,22 @@ export function useImportJob() {
               });
             }
           }
+        } else {
+          // If we can't fetch the job, it might have been deleted or there's a connection issue
+          console.warn('Could not fetch job status - job may have been deleted or connection lost');
         }
       }, 2000);
 
       return () => {
         if (pollingIntervalRef.current) {
           clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
         }
+        pollingStartTimeRef.current = null;
       };
+    } else {
+      // Reset polling start time when not polling
+      pollingStartTimeRef.current = null;
     }
   }, [isPolling, activeJob]);
 
