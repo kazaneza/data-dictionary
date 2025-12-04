@@ -159,6 +159,10 @@ def update_import_job(job_id: UUID4, update: ImportJobUpdate, db: Session = Depe
 async def process_import_job(job_id: UUID4, config: dict, selected_tables: List[str], user_info: dict = None, db: Session = Depends(get_db)):
     """Queue an import job for processing by the worker"""
     try:
+        # Validate that we have tables to import
+        if not selected_tables or len(selected_tables) == 0:
+            raise HTTPException(status_code=400, detail="No tables selected for import. Please select at least one table.")
+
         job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
         if not job:
             raise HTTPException(status_code=404, detail="Import job not found")

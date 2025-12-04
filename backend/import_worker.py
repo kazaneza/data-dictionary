@@ -86,7 +86,28 @@ def process_import_job(job_id: str, db: Session):
         print(f"Parsed config type: {type(config)}")
         print(f"Parsed config: {config}")
 
-        selected_tables = json.loads(config.get('selected_tables', '[]'))
+        # Parse selected_tables with better error handling
+        selected_tables_str = config.get('selected_tables', '[]')
+        try:
+            if isinstance(selected_tables_str, str):
+                selected_tables = json.loads(selected_tables_str)
+            else:
+                selected_tables = selected_tables_str if isinstance(selected_tables_str, list) else []
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"Error parsing selected_tables: {e}. Value: {selected_tables_str}")
+            selected_tables = []
+
+        # Validate that we have tables to import
+        if not selected_tables or len(selected_tables) == 0:
+            print(f"ERROR: No tables selected for import in job {job_id}")
+            job.status = 'failed'
+            job.error_message = 'No tables selected for import. Please select at least one table.'
+            job.updated_at = datetime.utcnow()
+            job.completed_at = datetime.utcnow()
+            db.commit()
+            return
+
+        print(f"Found {len(selected_tables)} tables to import: {selected_tables}")
 
         imported_count = 0
         failed_tables = []
@@ -177,6 +198,14 @@ def process_import_job(job_id: str, db: Session):
 
                 # Generate AI descriptions in worker (background)
                 print(f"Generating AI descriptions for {len(table_fields)} fields...")
+                # Update job status before long-running AI operation
+                db.refresh(job)
+                if job.status == 'cancelled':
+                    print(f"Job {job_id} was cancelled before AI generation. Stopping.")
+                    return
+                job.updated_at = datetime.utcnow()
+                db.commit()
+                
                 table_description = AIDescriptionGenerator.generate_table_description(
                     table_name, table_fields, source_name, source_description
                 )
@@ -187,6 +216,14 @@ def process_import_job(job_id: str, db: Session):
 
                 # Get table record count
                 print(f"Counting records in {table_name}...")
+                # Update job status before potentially long-running count operation
+                db.refresh(job)
+                if job.status == 'cancelled':
+                    print(f"Job {job_id} was cancelled before record count. Stopping.")
+                    return
+                job.updated_at = datetime.utcnow()
+                db.commit()
+                
                 from routers.database_connections import get_connection_handler
                 connection_class = get_connection_handler(config.get('type'))
                 handler = connection_class(config_for_api)
@@ -270,15 +307,22 @@ def process_import_job(job_id: str, db: Session):
 
     except Exception as e:
         import traceback
-        print(f"Error processing job {job_id}: {e}")
+        print(f"ERROR: Error processing job {job_id}: {e}")
         print(f"Traceback: {traceback.format_exc()}")
-        job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
-        if job:
-            job.status = 'failed'
-            job.error_message = str(e)
-            job.updated_at = datetime.utcnow()
-            job.completed_at = datetime.utcnow()
-            db.commit()
+        try:
+            job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+            if job:
+                job.status = 'failed'
+                job.error_message = f'Worker error: {str(e)}'
+                job.updated_at = datetime.utcnow()
+                job.completed_at = datetime.utcnow()
+                db.commit()
+                print(f"Job {job_id} marked as failed due to error")
+            else:
+                print(f"WARNING: Could not find job {job_id} to mark as failed")
+        except Exception as db_error:
+            print(f"CRITICAL: Failed to update job status in database: {db_error}")
+            print(f"Traceback: {traceback.format_exc()}")
 
 def main():
     """Main worker loop - polls for pending jobs"""
@@ -332,9 +376,12 @@ def main():
             db.close()
             break
         except Exception as e:
-            print(f"Worker error: {e}")
+            import traceback
+            print(f"CRITICAL: Worker loop error: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
             db.close()
             if not shutdown_requested:
+                print("Waiting 5 seconds before retrying...")
                 time.sleep(5)
     
     print("Worker stopped gracefully.")
