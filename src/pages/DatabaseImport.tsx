@@ -77,7 +77,7 @@ export default function DatabaseImport() {
   const [connectionController, setConnectionController] = useState<AbortController | null>(null);
 
   // Background import job management
-  const { activeJob, startImportJob, cancelImportJob, isPolling } = useImportJob();
+  const { activeJob, startImportJob, cancelImportJob, isPolling, isJobStuck, minutesStuck } = useImportJob();
 
   useEffect(() => {
     const fetchSources = async () => {
@@ -529,6 +529,17 @@ export default function DatabaseImport() {
               </p>
               {activeJob.error_message && (
                 <p className="text-sm text-red-600 mt-1">{activeJob.error_message}</p>
+              )}
+              {isJobStuck && (activeJob.status === 'in_progress' || activeJob.status === 'pending') && (
+                <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
+                  <p className="text-yellow-800 font-medium">
+                    ⚠️ Import appears to be stuck (no updates for {minutesStuck} minutes)
+                  </p>
+                  <p className="text-yellow-700 text-xs mt-1">
+                    The import will be automatically cancelled in 15 minutes if it doesn't resume. 
+                    You can also cancel it manually using the button above.
+                  </p>
+                </div>
               )}
             </div>
             <div className="flex items-center space-x-3 flex-shrink-0">

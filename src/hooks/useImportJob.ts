@@ -20,11 +20,16 @@ interface ImportJob {
 export function useImportJob() {
   const [activeJob, setActiveJob] = useState<ImportJob | null>(null);
   const [isPolling, setIsPolling] = useState(false);
+  const [isJobStuck, setIsJobStuck] = useState(false);
+  const [minutesStuck, setMinutesStuck] = useState(0);
   const pollingIntervalRef = useRef<number | null>(null);
   const isLoggedOutRef = useRef(false);
   const pollingStartTimeRef = useRef<number | null>(null);
+  const stuckJobWarningShownRef = useRef(false);
+  const autoCancelTimeoutRef = useRef<number | null>(null);
   const MAX_POLLING_TIME = 24 * 60 * 60 * 1000; // 24 hours max polling time
   const STALE_JOB_THRESHOLD = 2 * 60 * 60 * 1000; // 2 hours - if job hasn't updated, consider it stuck
+  const AUTO_CANCEL_GRACE_PERIOD = 15 * 60 * 1000; // 15 minutes grace period before auto-cancelling stuck jobs
 
   const checkForActiveJobs = async () => {
     try {
@@ -40,7 +45,46 @@ export function useImportJob() {
         const job = jobs[0] as ImportJob;
         setActiveJob(job);
         setIsPolling(true);
-        toast('Resuming import job...', { duration: 2000 });
+        
+        // Check if the job is already stuck when resuming
+        if (job.updated_at && ['pending', 'in_progress'].includes(job.status)) {
+          const lastUpdate = new Date(job.updated_at).getTime();
+          const timeSinceUpdate = Date.now() - lastUpdate;
+          
+          if (timeSinceUpdate > STALE_JOB_THRESHOLD) {
+            const stuckMinutes = Math.round(timeSinceUpdate / 60000);
+            setIsJobStuck(true);
+            setMinutesStuck(stuckMinutes);
+            stuckJobWarningShownRef.current = true;
+            toast.error(`Resuming stuck import job (no updates for ${stuckMinutes} minutes). It will be automatically cancelled in 15 minutes if it doesn't resume.`, {
+              duration: 10000,
+              icon: '⚠️',
+            });
+            
+            // Set up auto-cancel after grace period
+            autoCancelTimeoutRef.current = window.setTimeout(async () => {
+              const finalCheck = await fetchJobStatus(job.id);
+              if (finalCheck && 
+                  ['pending', 'in_progress'].includes(finalCheck.status) &&
+                  finalCheck.updated_at) {
+                const finalUpdate = new Date(finalCheck.updated_at).getTime();
+                const finalTimeSinceUpdate = Date.now() - finalUpdate;
+                
+                if (finalTimeSinceUpdate > STALE_JOB_THRESHOLD) {
+                  console.warn('Auto-cancelling stuck job:', job.id);
+                  await cancelImportJob(job.id);
+                  toast.error('Stuck import job has been automatically cancelled. You can start a new import.', {
+                    duration: 8000,
+                  });
+                }
+              }
+            }, AUTO_CANCEL_GRACE_PERIOD);
+          } else {
+            toast('Resuming import job...', { duration: 2000 });
+          }
+        } else {
+          toast('Resuming import job...', { duration: 2000 });
+        }
       }
     } catch (error) {
       console.error('Error checking for active jobs:', error);
@@ -94,7 +138,17 @@ export function useImportJob() {
 
       setActiveJob(null);
       setIsPolling(false);
+      setIsJobStuck(false);
+      setMinutesStuck(0);
       pollingStartTimeRef.current = null;
+      stuckJobWarningShownRef.current = false;
+      
+      // Clear any pending auto-cancel timeout
+      if (autoCancelTimeoutRef.current) {
+        clearTimeout(autoCancelTimeoutRef.current);
+        autoCancelTimeoutRef.current = null;
+      }
+      
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
         pollingIntervalRef.current = null;
@@ -102,6 +156,7 @@ export function useImportJob() {
       toast('Import cancelled');
     } catch (error) {
       console.error('Error cancelling import job:', error);
+      toast.error('Failed to cancel import job');
     }
   };
 
@@ -135,11 +190,53 @@ export function useImportJob() {
             
             if (timeSinceUpdate > STALE_JOB_THRESHOLD && 
                 ['pending', 'in_progress'].includes(updatedJob.status)) {
-              console.warn('Job appears to be stuck - no updates for', Math.round(timeSinceUpdate / 60000), 'minutes');
-              toast('Import appears to be stuck. Please check the worker process.', {
-                duration: 5000,
-                icon: '⚠️',
-              });
+              const stuckMinutes = Math.round(timeSinceUpdate / 60000);
+              setIsJobStuck(true);
+              setMinutesStuck(stuckMinutes);
+              console.warn('Job appears to be stuck - no updates for', stuckMinutes, 'minutes');
+              
+              // Show warning if not already shown
+              if (!stuckJobWarningShownRef.current) {
+                stuckJobWarningShownRef.current = true;
+                toast.error(`Import appears to be stuck (no updates for ${stuckMinutes} minutes). It will be automatically cancelled in 15 minutes if it doesn't resume.`, {
+                  duration: 10000,
+                  icon: '⚠️',
+                });
+                
+                // Set up auto-cancel after grace period
+                if (autoCancelTimeoutRef.current) {
+                  clearTimeout(autoCancelTimeoutRef.current);
+                }
+                autoCancelTimeoutRef.current = window.setTimeout(async () => {
+                  // Double-check the job is still stuck before cancelling
+                  const finalCheck = await fetchJobStatus(updatedJob.id);
+                  if (finalCheck && 
+                      ['pending', 'in_progress'].includes(finalCheck.status) &&
+                      finalCheck.updated_at) {
+                    const finalUpdate = new Date(finalCheck.updated_at).getTime();
+                    const finalTimeSinceUpdate = Date.now() - finalUpdate;
+                    
+                    if (finalTimeSinceUpdate > STALE_JOB_THRESHOLD) {
+                      console.warn('Auto-cancelling stuck job:', updatedJob.id);
+                      await cancelImportJob(updatedJob.id);
+                      toast.error('Stuck import job has been automatically cancelled. You can start a new import.', {
+                        duration: 8000,
+                      });
+                    }
+                  }
+                }, AUTO_CANCEL_GRACE_PERIOD);
+              }
+            } else {
+              // Job is not stuck, reset warning flag and clear auto-cancel timeout
+              setIsJobStuck(false);
+              setMinutesStuck(0);
+              if (stuckJobWarningShownRef.current) {
+                stuckJobWarningShownRef.current = false;
+              }
+              if (autoCancelTimeoutRef.current) {
+                clearTimeout(autoCancelTimeoutRef.current);
+                autoCancelTimeoutRef.current = null;
+              }
             }
           }
 
@@ -160,7 +257,16 @@ export function useImportJob() {
 
           if (['completed', 'failed', 'cancelled'].includes(updatedJob.status)) {
             setIsPolling(false);
+            setIsJobStuck(false);
+            setMinutesStuck(0);
             pollingStartTimeRef.current = null;
+            stuckJobWarningShownRef.current = false;
+            
+            // Clear auto-cancel timeout if job completed/failed/cancelled
+            if (autoCancelTimeoutRef.current) {
+              clearTimeout(autoCancelTimeoutRef.current);
+              autoCancelTimeoutRef.current = null;
+            }
 
             if (updatedJob.status === 'completed') {
               toast.success(`Import completed! ${updatedJob.imported_tables}/${updatedJob.total_tables} tables imported`, {
@@ -183,7 +289,12 @@ export function useImportJob() {
           clearInterval(pollingIntervalRef.current);
           pollingIntervalRef.current = null;
         }
+        if (autoCancelTimeoutRef.current) {
+          clearTimeout(autoCancelTimeoutRef.current);
+          autoCancelTimeoutRef.current = null;
+        }
         pollingStartTimeRef.current = null;
+        stuckJobWarningShownRef.current = false;
       };
     } else {
       // Reset polling start time when not polling
@@ -219,6 +330,10 @@ export function useImportJob() {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
       }
+      if (autoCancelTimeoutRef.current) {
+        clearTimeout(autoCancelTimeoutRef.current);
+        autoCancelTimeoutRef.current = null;
+      }
     };
   }, [activeJob]);
 
@@ -227,5 +342,7 @@ export function useImportJob() {
     startImportJob,
     cancelImportJob,
     isPolling,
+    isJobStuck,
+    minutesStuck,
   };
 }
