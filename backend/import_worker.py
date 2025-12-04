@@ -6,6 +6,8 @@ import time
 import requests
 import json
 import uuid as uuid_lib
+import signal
+import sys
 from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -14,6 +16,9 @@ from dotenv import load_dotenv
 from models import ImportJob, Database as DatabaseModel, Table as TableModel, Field as FieldModel, SourceSystem
 from routers.database_import.ai_descriptions import AIDescriptionGenerator
 from routers.database_import.models import TableField
+
+# Global flag for graceful shutdown
+shutdown_requested = False
 
 load_dotenv()
 
@@ -42,6 +47,23 @@ def get_backend_url():
 
 BACKEND_URL = get_backend_url()
 print(f"Worker using BACKEND_URL: {BACKEND_URL}")
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully"""
+    global shutdown_requested
+    print("\nShutdown signal received. Finishing current job and exiting...")
+    shutdown_requested = True
+
+# Register signal handlers for graceful shutdown
+signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
+signal.signal(signal.SIGTERM, signal_handler)  # Termination signal
+
+def check_job_cancelled(job_id: str, db: Session) -> bool:
+    """Check if a job has been cancelled"""
+    job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+    if job and job.status == 'cancelled':
+        return True
+    return False
 
 def process_import_job(job_id: str, db: Session):
     """Process a single import job"""
@@ -98,6 +120,28 @@ def process_import_job(job_id: str, db: Session):
 
         # Process each table
         for table_name in selected_tables:
+            # Check if job was cancelled or shutdown requested
+            if shutdown_requested:
+                print(f"Shutdown requested. Stopping job {job_id}")
+                job.status = 'cancelled'
+                job.error_message = 'Worker shutdown requested'
+                job.updated_at = datetime.utcnow()
+                job.completed_at = datetime.utcnow()
+                db.commit()
+                return
+            
+            # Check if job was cancelled from frontend
+            if check_job_cancelled(job_id, db):
+                print(f"Job {job_id} was cancelled. Stopping processing.")
+                job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+                if job:
+                    job.status = 'cancelled'
+                    job.error_message = 'Job cancelled by user'
+                    job.updated_at = datetime.utcnow()
+                    job.completed_at = datetime.utcnow()
+                    db.commit()
+                return
+            
             try:
                 print(f"Processing table: {table_name}")
 
@@ -185,6 +229,12 @@ def process_import_job(job_id: str, db: Session):
                 print(f"Imported table {table_name} ({imported_count}/{len(selected_tables)})")
 
                 # Update progress after each table (for better UX)
+                # Refresh job to get latest status
+                db.refresh(job)
+                if job.status == 'cancelled':
+                    print(f"Job {job_id} was cancelled during processing. Stopping.")
+                    return
+                
                 job.imported_tables = imported_count
                 job.updated_at = datetime.utcnow()
                 db.commit()
@@ -197,7 +247,15 @@ def process_import_job(job_id: str, db: Session):
                 job.updated_at = datetime.utcnow()
                 db.commit()
 
-        # Final update
+        # Final update - check if job was cancelled before finalizing
+        db.refresh(job)
+        if job.status == 'cancelled':
+            print(f"Job {job_id} was cancelled. Finalizing cancellation.")
+            job.error_message = f'Job cancelled. {imported_count} tables were imported before cancellation.'
+            job.completed_at = datetime.utcnow()
+            db.commit()
+            return
+        
         job.imported_tables = imported_count
         job.updated_at = datetime.utcnow()
         final_status = 'completed' if failed_tables == [] else ('failed' if imported_count == 0 else 'completed')
@@ -224,35 +282,62 @@ def process_import_job(job_id: str, db: Session):
 
 def main():
     """Main worker loop - polls for pending jobs"""
+    global shutdown_requested
     print("Import worker started")
+    print("Press Ctrl+C to stop gracefully (will finish current job)")
 
-    while True:
+    while not shutdown_requested:
         db = SessionLocal()
         try:
-            # Find pending jobs
+            # Find pending jobs (also check for in_progress jobs that might need resuming)
+            # Exclude cancelled, completed, and failed jobs
             pending_jobs = db.query(ImportJob).filter(
-                ImportJob.status == 'pending'
+                ImportJob.status.in_(['pending', 'in_progress'])
+            ).filter(
+                ImportJob.status != 'cancelled'
             ).order_by(ImportJob.created_at).all()
 
             if pending_jobs:
                 for job in pending_jobs:
-                    # Mark as in progress
-                    job.status = 'in_progress'
-                    job.updated_at = datetime.utcnow()
-                    db.commit()
+                    # Check if shutdown was requested
+                    if shutdown_requested:
+                        break
+                    
+                    # Skip if already cancelled
+                    if job.status == 'cancelled':
+                        continue
+                    
+                    # Mark as in progress if it was pending
+                    if job.status == 'pending':
+                        job.status = 'in_progress'
+                        job.updated_at = datetime.utcnow()
+                        db.commit()
 
                     # Process the job
                     process_import_job(str(job.id), db)
+                    
+                    # Break if shutdown requested after processing
+                    if shutdown_requested:
+                        break
 
             db.close()
 
-            # Wait before checking again
-            time.sleep(2)
+            # Wait before checking again (unless shutdown requested)
+            if not shutdown_requested:
+                time.sleep(2)
 
+        except KeyboardInterrupt:
+            print("\nKeyboard interrupt received. Shutting down gracefully...")
+            shutdown_requested = True
+            db.close()
+            break
         except Exception as e:
             print(f"Worker error: {e}")
             db.close()
-            time.sleep(5)
+            if not shutdown_requested:
+                time.sleep(5)
+    
+    print("Worker stopped gracefully.")
 
 if __name__ == "__main__":
     main()

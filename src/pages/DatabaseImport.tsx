@@ -538,24 +538,28 @@ export default function DatabaseImport() {
                   <span className="text-sm">Processing...</span>
                 </div>
               )}
-              {activeJob.status === 'in_progress' && (
+              {(activeJob.status === 'in_progress' || activeJob.status === 'pending') && (
                 <button
                   onClick={() => cancelImportJob(activeJob.id)}
-                  className="text-sm text-red-600 hover:text-red-700 px-3 py-1 border border-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                  className="text-sm text-red-600 hover:text-red-700 px-3 py-1 border border-red-600 rounded-lg hover:bg-red-50 transition-colors font-medium"
                 >
                   Cancel Import
                 </button>
               )}
             </div>
           </div>
-          {activeJob.status === 'in_progress' && (
+          {(activeJob.status === 'in_progress' || activeJob.status === 'pending') && (
             <div className="mt-3">
               <div className="w-full bg-gray-200 rounded-full h-2">
                 <div
                   className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${(activeJob.imported_tables / activeJob.total_tables) * 100}%` }}
+                  style={{ width: `${Math.max((activeJob.imported_tables / activeJob.total_tables) * 100, 2)}%` }}
                 ></div>
               </div>
+              <p className="text-xs text-gray-600 mt-1">
+                {activeJob.status === 'pending' ? 'Waiting for worker to start...' : 
+                 `Progress: ${activeJob.imported_tables} of ${activeJob.total_tables} tables`}
+              </p>
             </div>
           )}
         </div>
