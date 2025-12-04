@@ -499,6 +499,8 @@ export default function DatabaseImport() {
       {/* Active Import Job Status */}
       {activeJob && (
         <div className={`border rounded-lg p-4 mb-4 ${
+          isJobStuck && (activeJob.status === 'in_progress' || activeJob.status === 'pending') 
+            ? 'bg-yellow-50 border-yellow-300 border-2' :
           activeJob.status === 'completed' ? 'bg-green-50 border-green-200' :
           activeJob.status === 'failed' ? 'bg-red-50 border-red-200' :
           activeJob.status === 'cancelled' ? 'bg-gray-50 border-gray-200' :
@@ -506,19 +508,30 @@ export default function DatabaseImport() {
         }`}>
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex-1 min-w-0">
-              <h3 className={`font-medium ${
-                activeJob.status === 'completed' ? 'text-green-900' :
-                activeJob.status === 'failed' ? 'text-red-900' :
-                activeJob.status === 'cancelled' ? 'text-gray-900' :
-                'text-blue-900'
-              }`}>
-                {activeJob.status === 'pending' ? 'Import Starting...' :
-                 activeJob.status === 'in_progress' ? 'Import In Progress' :
-                 activeJob.status === 'completed' ? 'Import Completed' :
-                 activeJob.status === 'failed' ? 'Import Failed' :
-                 'Import Cancelled'}
-              </h3>
-              <p className={`text-sm ${
+              <div className="flex items-center gap-2">
+                <h3 className={`font-medium ${
+                  isJobStuck && (activeJob.status === 'in_progress' || activeJob.status === 'pending')
+                    ? 'text-yellow-900' :
+                  activeJob.status === 'completed' ? 'text-green-900' :
+                  activeJob.status === 'failed' ? 'text-red-900' :
+                  activeJob.status === 'cancelled' ? 'text-gray-900' :
+                  'text-blue-900'
+                }`}>
+                  {activeJob.status === 'pending' ? 'Import Starting...' :
+                   activeJob.status === 'in_progress' ? 'Import In Progress' :
+                   activeJob.status === 'completed' ? 'Import Completed' :
+                   activeJob.status === 'failed' ? 'Import Failed' :
+                   'Import Cancelled'}
+                </h3>
+                {isJobStuck && (activeJob.status === 'in_progress' || activeJob.status === 'pending') && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-200 text-yellow-800 animate-pulse">
+                    ⚠️ Stuck
+                  </span>
+                )}
+              </div>
+              <p className={`text-sm mt-1 ${
+                isJobStuck && (activeJob.status === 'in_progress' || activeJob.status === 'pending')
+                  ? 'text-yellow-800' :
                 activeJob.status === 'completed' ? 'text-green-700' :
                 activeJob.status === 'failed' ? 'text-red-700' :
                 activeJob.status === 'cancelled' ? 'text-gray-700' :
@@ -526,18 +539,20 @@ export default function DatabaseImport() {
               }`}>
                 {activeJob.imported_tables} of {activeJob.total_tables} tables imported
                 {activeJob.failed_tables.length > 0 && ` (${activeJob.failed_tables.length} failed)`}
+                {isJobStuck && (activeJob.status === 'in_progress' || activeJob.status === 'pending') && (
+                  <span className="ml-2">• No updates for {minutesStuck} min</span>
+                )}
               </p>
               {activeJob.error_message && (
                 <p className="text-sm text-red-600 mt-1">{activeJob.error_message}</p>
               )}
               {isJobStuck && (activeJob.status === 'in_progress' || activeJob.status === 'pending') && (
-                <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
-                  <p className="text-yellow-800 font-medium">
-                    ⚠️ Import appears to be stuck (no updates for {minutesStuck} minutes)
+                <div className="mt-2 p-2.5 bg-yellow-100 border-l-4 border-yellow-400 rounded-r text-sm">
+                  <p className="text-yellow-900 font-medium">
+                    Import appears to be stuck
                   </p>
-                  <p className="text-yellow-700 text-xs mt-1">
-                    The import will be automatically cancelled in 15 minutes if it doesn't resume. 
-                    You can also cancel it manually using the button above.
+                  <p className="text-yellow-800 text-xs mt-1">
+                    Will auto-cancel in 15 minutes if not resumed. You can cancel manually using the button above.
                   </p>
                 </div>
               )}

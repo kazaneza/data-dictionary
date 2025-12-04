@@ -58,10 +58,7 @@ export function useImportJob() {
             setIsJobStuck(true);
             setMinutesStuck(stuckMinutes);
             stuckJobWarningShownRef.current = true;
-            toast(`Resuming stuck import (${stuckMinutes} min). Will auto-cancel in 15 min if not resumed.`, {
-              duration: 5000,
-              icon: '⚠️',
-            });
+            // No toast - the UI will show the warning inline
             
             // Set up auto-cancel after grace period
             autoCancelTimeoutRef.current = window.setTimeout(async () => {
@@ -75,18 +72,15 @@ export function useImportJob() {
                 if (finalTimeSinceUpdate > STALE_JOB_THRESHOLD) {
                   console.warn('Auto-cancelling stuck job:', job.id);
                   await cancelImportJob(job.id);
+                  // Only show toast for auto-cancel completion (one-time event)
                   toast('Stuck import automatically cancelled. You can start a new import.', {
-                    duration: 5000,
+                    duration: 4000,
                     icon: 'ℹ️',
                   });
                 }
               }
             }, AUTO_CANCEL_GRACE_PERIOD);
-          } else {
-            toast('Resuming import job...', { duration: 2000 });
           }
-        } else {
-          toast('Resuming import job...', { duration: 2000 });
         }
       }
     } catch (error) {
@@ -198,13 +192,9 @@ export function useImportJob() {
               setMinutesStuck(stuckMinutes);
               console.warn('Job appears to be stuck - no updates for', stuckMinutes, 'minutes');
               
-              // Show warning if not already shown (less intrusive - shorter duration)
+              // No toast - the UI will show the warning inline
               if (!stuckJobWarningShownRef.current) {
                 stuckJobWarningShownRef.current = true;
-                toast(`Import appears stuck (${stuckMinutes} min). Will auto-cancel in 15 min if not resumed.`, {
-                  duration: 5000,
-                  icon: '⚠️',
-                });
                 
                 // Set up auto-cancel after grace period
                 if (autoCancelTimeoutRef.current) {
@@ -222,8 +212,9 @@ export function useImportJob() {
                     if (finalTimeSinceUpdate > STALE_JOB_THRESHOLD) {
                       console.warn('Auto-cancelling stuck job:', updatedJob.id);
                       await cancelImportJob(updatedJob.id);
+                      // Only show toast for auto-cancel completion (one-time event)
                       toast('Stuck import automatically cancelled. You can start a new import.', {
-                        duration: 5000,
+                        duration: 4000,
                         icon: 'ℹ️',
                       });
                     }
@@ -311,17 +302,8 @@ export function useImportJob() {
       const diagnostics = await getWorkerDiagnostics();
       setWorkerDiagnostics(diagnostics);
       
-      // Only show toast on initial check or when explicitly requested, not on periodic checks
-      if (showToast && diagnostics.worker_status === 'likely_not_running' && diagnostics.stale_jobs_count > 0) {
-        if (!workerStatusWarningShownRef.current) {
-          workerStatusWarningShownRef.current = true;
-          // Use a less intrusive notification - shorter duration and info style
-          toast('Import worker is not running. Check the diagnostic panel below for details.', {
-            duration: 4000,
-            icon: 'ℹ️',
-          });
-        }
-      }
+      // No toast for worker status - the UI will show it inline in the diagnostic panel
+      // This prevents annoying popups while still showing the information
     } catch (error) {
       console.error('Error checking worker status:', error);
     }
