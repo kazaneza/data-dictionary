@@ -440,11 +440,34 @@ def delete_database(database_id: UUID4, user = Depends(get_current_user), db: Se
 
 # Tables CRUD
 @app.get("/tables")
-def get_tables(user = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_tables(
+    database_id: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50,
+    user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     try:
-        tables = db.query(Table).all()
-        logger.info(f"Retrieved {len(tables)} tables")
-        return tables
+        # Build query with optional database filter
+        query = db.query(Table)
+        if database_id:
+            query = query.filter(Table.database_id == database_id)
+        
+        # Get total count before pagination
+        total = query.count()
+        
+        # Apply pagination with ORDER BY (required by MSSQL)
+        offset = (page - 1) * limit
+        tables = query.order_by(Table.name).offset(offset).limit(limit).all()
+        
+        logger.info(f"Retrieved {len(tables)} tables (page {page}, limit {limit}, total: {total})")
+        return {
+            "items": tables,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit if limit > 0 else 0
+        }
     except Exception as e:
         logger.error(f"Error retrieving tables: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -522,14 +545,34 @@ def delete_table(table_id: UUID4, user = Depends(get_current_user), db: Session 
 
 # Fields CRUD
 @app.get("/fields")
-def get_fields(table_id: str = None, user = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_fields(
+    table_id: Optional[str] = None,
+    page: int = 1,
+    limit: int = 100,
+    user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     try:
+        # Build query with optional table filter
+        query = db.query(Field)
         if table_id:
-            fields = db.query(Field).filter(Field.table_id == table_id).all()
-        else:
-            fields = db.query(Field).all()
-        logger.info(f"Retrieved {len(fields)} fields")
-        return fields
+            query = query.filter(Field.table_id == table_id)
+        
+        # Get total count before pagination
+        total = query.count()
+        
+        # Apply pagination with ORDER BY (required by MSSQL)
+        offset = (page - 1) * limit
+        fields = query.order_by(Field.name).offset(offset).limit(limit).all()
+        
+        logger.info(f"Retrieved {len(fields)} fields (page {page}, limit {limit}, total: {total})")
+        return {
+            "items": fields,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit if limit > 0 else 0
+        }
     except Exception as e:
         logger.error(f"Error retrieving fields: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

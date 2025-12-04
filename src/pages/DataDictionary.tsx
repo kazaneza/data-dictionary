@@ -86,6 +86,14 @@ function DataDictionary() {
   const [loadingFields, setLoadingFields] = useState(false);
   const [loadingTables, setLoadingTables] = useState(false);
   const [loadingDatabases, setLoadingDatabases] = useState(false);
+  const [loadingMoreTables, setLoadingMoreTables] = useState(false);
+  
+  // Track pagination per database
+  const [tablePagination, setTablePagination] = useState<Record<string, {
+    currentPage: number;
+    total: number;
+    pages: number;
+  }>>({});
 
   useEffect(() => {
     const loadInitialData = async () => {
@@ -151,11 +159,27 @@ function DataDictionary() {
 
       try {
         setLoadingTables(true);
-        const tablesPromises = selectedDatabases.map(dbId => api.fetchTables(dbId));
+        // Load first page for each selected database
+        const tablesPromises = selectedDatabases.map(async (dbId) => {
+          const result = await api.fetchTablesPaginated(dbId, 1, 50);
+          return { dbId, result };
+        });
         const tablesResults = await Promise.all(tablesPromises);
-        const allTables = tablesResults.flat();
         
+        // Combine all tables
+        const allTables = tablesResults.flatMap(({ result }) => result.items);
         setTables(allTables);
+
+        // Update pagination state
+        const newPagination: Record<string, { currentPage: number; total: number; pages: number }> = {};
+        tablesResults.forEach(({ dbId, result }) => {
+          newPagination[dbId] = {
+            currentPage: result.page,
+            total: result.total,
+            pages: result.pages
+          };
+        });
+        setTablePagination(newPagination);
 
         // Update each DB in each source to store tables + set totalTables
         setSourceSystems(prev =>
@@ -163,9 +187,10 @@ function DataDictionary() {
             ...source,
             databases: source.databases.map(db => {
               const relevantTables = allTables.filter(t => t.database_id === db.id);
+              const pagination = newPagination[db.id];
               return {
                 ...db,
-                totalTables: relevantTables.length,
+                totalTables: pagination?.total || relevantTables.length,
                 tables: relevantTables
               };
             })
@@ -181,6 +206,85 @@ function DataDictionary() {
 
     loadTables();
   }, [selectedDatabases]);
+
+  const loadMoreTables = async () => {
+    if (!selectedDatabases.length || loadingMoreTables) return;
+
+    try {
+      setLoadingMoreTables(true);
+      const loadPromises = selectedDatabases.map(async (dbId) => {
+        const pagination = tablePagination[dbId];
+        if (!pagination || pagination.currentPage >= pagination.pages) {
+          return { dbId, tables: [] };
+        }
+
+        const nextPage = pagination.currentPage + 1;
+        const result = await api.fetchTablesPaginated(dbId, nextPage, 50);
+        
+        // Update pagination state
+        setTablePagination(prev => ({
+          ...prev,
+          [dbId]: {
+            currentPage: result.page,
+            total: result.total,
+            pages: result.pages
+          }
+        }));
+
+        return { dbId, tables: result.items };
+      });
+
+      const results = await Promise.all(loadPromises);
+      const newTables = results.flatMap(({ tables }) => tables);
+      
+      // Append new tables to existing ones
+      setTables(prev => [...prev, ...newTables]);
+
+      // Update source systems with new tables
+      setSourceSystems(prev =>
+        prev.map(source => ({
+          ...source,
+          databases: source.databases.map(db => {
+            const newTablesForDb = newTables.filter(t => t.database_id === db.id);
+            if (newTablesForDb.length === 0) return db;
+            
+            return {
+              ...db,
+              tables: [...db.tables, ...newTablesForDb]
+            };
+          })
+        }))
+      );
+    } catch (error) {
+      console.error('Error loading more tables:', error);
+      toast.error('Failed to load more tables');
+    } finally {
+      setLoadingMoreTables(false);
+    }
+  };
+
+  const hasMoreTables = () => {
+    return selectedDatabases.some(dbId => {
+      const pagination = tablePagination[dbId];
+      return pagination && pagination.currentPage < pagination.pages;
+    });
+  };
+
+  const getTotalTablesLoaded = () => {
+    return selectedDatabases.reduce((sum, dbId) => {
+      const pagination = tablePagination[dbId];
+      if (!pagination) return sum;
+      const loaded = pagination.currentPage * 50;
+      return sum + Math.min(loaded, pagination.total);
+    }, 0);
+  };
+
+  const getTotalTablesCount = () => {
+    return selectedDatabases.reduce((sum, dbId) => {
+      const pagination = tablePagination[dbId];
+      return sum + (pagination?.total || 0);
+    }, 0);
+  };
 
   useEffect(() => {
     const loadFields = async () => {
@@ -623,48 +727,95 @@ function DataDictionary() {
 
       {/* Tables View */}
       {viewMode === 'tables' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {getAllTables().map(table => (
-            <div
-              key={table.id}
-              className="bg-white rounded-lg shadow-md overflow-hidden cursor-pointer hover:shadow-lg transition-shadow"
-              onClick={() => handleTableSelection(table.id)}
-            >
-              <div className="p-4">
-                <div className="flex items-center space-x-2 mb-3">
-                  <Table2 className="h-5 w-5 text-[#003B7E]" />
-                  <h3 className="font-semibold">{table.name}</h3>
-                </div>
-                <p className="text-sm text-gray-600 mb-3">{table.description}</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div className="text-sm text-gray-500">
-                      {fields.filter(f => f.table_id === table.id).length} Fields
+        <div>
+          {/* Tables count info */}
+          {selectedDatabases.length > 0 && (
+            <div className="mb-4 flex items-center justify-between">
+              <div className="text-sm text-gray-600">
+                Showing {getTotalTablesLoaded()} of {getTotalTablesCount()} tables
+              </div>
+              {hasMoreTables() && (
+                <button
+                  onClick={loadMoreTables}
+                  disabled={loadingMoreTables}
+                  className="flex items-center space-x-2 bg-[#003B7E] text-white px-4 py-2 rounded-lg hover:bg-[#002c5f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loadingMoreTables ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>Loading...</span>
+                    </>
+                  ) : (
+                    <span>Load More Tables</span>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {getAllTables().map(table => (
+              <div
+                key={table.id}
+                className="bg-white rounded-lg shadow-md overflow-hidden cursor-pointer hover:shadow-lg transition-shadow"
+                onClick={() => handleTableSelection(table.id)}
+              >
+                <div className="p-4">
+                  <div className="flex items-center space-x-2 mb-3">
+                    <Table2 className="h-5 w-5 text-[#003B7E]" />
+                    <h3 className="font-semibold">{table.name}</h3>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-3">{table.description}</p>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <div className="text-sm text-gray-500">
+                        {fields.filter(f => f.table_id === table.id).length} Fields
+                      </div>
+                      {table.category_id && (
+                        <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                          {categories.find(cat => cat.id === table.category_id)?.name}
+                        </span>
+                      )}
                     </div>
-                    {table.category_id && (
-                      <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                        {categories.find(cat => cat.id === table.category_id)?.name}
-                      </span>
+                    {table.record_count !== undefined && (
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-gray-500">Records:</span>
+                        <span className="font-medium text-gray-700">
+                          {table.record_count.toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                    {table.last_imported && (
+                      <div className="flex justify-between items-center text-xs text-gray-400">
+                        <span>Last imported:</span>
+                        <span>{new Date(table.last_imported).toLocaleDateString()}</span>
+                      </div>
                     )}
                   </div>
-                  {table.record_count !== undefined && (
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-500">Records:</span>
-                      <span className="font-medium text-gray-700">
-                        {table.record_count.toLocaleString()}
-                      </span>
-                    </div>
-                  )}
-                  {table.last_imported && (
-                    <div className="flex justify-between items-center text-xs text-gray-400">
-                      <span>Last imported:</span>
-                      <span>{new Date(table.last_imported).toLocaleDateString()}</span>
-                    </div>
-                  )}
                 </div>
               </div>
+            ))}
+          </div>
+          
+          {/* Load More button at bottom */}
+          {hasMoreTables() && (
+            <div className="mt-6 flex justify-center">
+              <button
+                onClick={loadMoreTables}
+                disabled={loadingMoreTables}
+                className="flex items-center space-x-2 bg-[#003B7E] text-white px-6 py-3 rounded-lg hover:bg-[#002c5f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loadingMoreTables ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Loading more tables...</span>
+                  </>
+                ) : (
+                  <span>Load More Tables</span>
+                )}
+              </button>
             </div>
-          ))}
+          )}
         </div>
       )}
 

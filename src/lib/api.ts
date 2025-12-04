@@ -6,8 +6,36 @@ import * as XLSX from 'xlsx';
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 const cache = new Map<string, { data: any; timestamp: number }>();
 
+// Dynamic baseURL configuration
+// Priority: 1. Environment variable, 2. Current hostname, 3. localhost fallback
+const getBaseURL = (): string => {
+  // Check for environment variable first (for production/CI)
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  
+  // In browser, use current hostname (works for both localhost and server IP)
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    const port = '8000'; // Backend port
+    
+    // Use HTTP for backend (most backends run on HTTP unless behind reverse proxy)
+    // If you need HTTPS, set VITE_API_URL environment variable
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return `http://localhost:${port}`;
+    }
+    
+    // For server deployments, use the detected hostname with HTTP
+    // This allows the app to work when accessed via server IP
+    return `http://${hostname}:${port}`;
+  }
+  
+  // Fallback for SSR or other environments
+  return 'http://localhost:8000';
+};
+
 export const api = axios.create({
-  baseURL: 'http://10.24.37.99:8000',
+  baseURL: getBaseURL(),
   headers: {
     'Content-Type': 'application/json',
   },
@@ -233,6 +261,15 @@ export const deleteDatabase = async (id: string): Promise<void> => {
   invalidateCache('databases');
 };
 
+// Paginated response type
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
 // Tables with pagination and filtering
 export const fetchTables = async (
   databaseId?: string,
@@ -246,8 +283,31 @@ export const fetchTables = async (
   const response = await api.get('/tables', {
     params: { database_id: databaseId, page, limit }
   });
-  setCache(cacheKey, response.data);
-  return response.data;
+  // Handle paginated response (new format) or array response (old format)
+  const data = Array.isArray(response.data) ? response.data : response.data.items || [];
+  setCache(cacheKey, data);
+  return data;
+};
+
+// Fetch tables with pagination metadata
+export const fetchTablesPaginated = async (
+  databaseId?: string,
+  page = 1,
+  limit = 50
+): Promise<PaginatedResponse<Table>> => {
+  const cacheKey = `tables_paginated_${databaseId || 'all'}_${page}_${limit}`;
+  const cached = getCached<PaginatedResponse<Table>>(cacheKey);
+  if (cached) return cached;
+
+  const response = await api.get('/tables', {
+    params: { database_id: databaseId, page, limit }
+  });
+  // Handle paginated response (new format) or array response (old format)
+  const data = Array.isArray(response.data) 
+    ? { items: response.data, total: response.data.length, page: 1, limit: response.data.length, pages: 1 }
+    : response.data;
+  setCache(cacheKey, data);
+  return data;
 };
 
 export const createTable = async (data: Omit<Table, 'id'>): Promise<Table> => {
@@ -280,8 +340,10 @@ export const fetchFields = async (
   const response = await api.get('/fields', {
     params: { table_id: tableId, page, limit }
   });
-  setCache(cacheKey, response.data);
-  return response.data;
+  // Handle paginated response (new format) or array response (old format)
+  const data = Array.isArray(response.data) ? response.data : response.data.items || [];
+  setCache(cacheKey, data);
+  return data;
 };
 
 export const createField = async (data: Omit<Field, 'id'>): Promise<Field> => {
