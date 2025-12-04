@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { toast } from 'react-hot-toast';
-import { api } from '../lib/api';
+import { api, getWorkerDiagnostics, type WorkerDiagnostics } from '../lib/api';
 
 interface ImportJob {
   id: string;
@@ -22,10 +22,12 @@ export function useImportJob() {
   const [isPolling, setIsPolling] = useState(false);
   const [isJobStuck, setIsJobStuck] = useState(false);
   const [minutesStuck, setMinutesStuck] = useState(0);
+  const [workerDiagnostics, setWorkerDiagnostics] = useState<WorkerDiagnostics | null>(null);
   const pollingIntervalRef = useRef<number | null>(null);
   const isLoggedOutRef = useRef(false);
   const pollingStartTimeRef = useRef<number | null>(null);
   const stuckJobWarningShownRef = useRef(false);
+  const workerStatusWarningShownRef = useRef(false);
   const autoCancelTimeoutRef = useRef<number | null>(null);
   const MAX_POLLING_TIME = 24 * 60 * 60 * 1000; // 24 hours max polling time
   const STALE_JOB_THRESHOLD = 2 * 60 * 60 * 1000; // 2 hours - if job hasn't updated, consider it stuck
@@ -56,8 +58,8 @@ export function useImportJob() {
             setIsJobStuck(true);
             setMinutesStuck(stuckMinutes);
             stuckJobWarningShownRef.current = true;
-            toast.error(`Resuming stuck import job (no updates for ${stuckMinutes} minutes). It will be automatically cancelled in 15 minutes if it doesn't resume.`, {
-              duration: 10000,
+            toast(`Resuming stuck import (${stuckMinutes} min). Will auto-cancel in 15 min if not resumed.`, {
+              duration: 5000,
               icon: '⚠️',
             });
             
@@ -73,8 +75,9 @@ export function useImportJob() {
                 if (finalTimeSinceUpdate > STALE_JOB_THRESHOLD) {
                   console.warn('Auto-cancelling stuck job:', job.id);
                   await cancelImportJob(job.id);
-                  toast.error('Stuck import job has been automatically cancelled. You can start a new import.', {
-                    duration: 8000,
+                  toast('Stuck import automatically cancelled. You can start a new import.', {
+                    duration: 5000,
+                    icon: 'ℹ️',
                   });
                 }
               }
@@ -195,11 +198,11 @@ export function useImportJob() {
               setMinutesStuck(stuckMinutes);
               console.warn('Job appears to be stuck - no updates for', stuckMinutes, 'minutes');
               
-              // Show warning if not already shown
+              // Show warning if not already shown (less intrusive - shorter duration)
               if (!stuckJobWarningShownRef.current) {
                 stuckJobWarningShownRef.current = true;
-                toast.error(`Import appears to be stuck (no updates for ${stuckMinutes} minutes). It will be automatically cancelled in 15 minutes if it doesn't resume.`, {
-                  duration: 10000,
+                toast(`Import appears stuck (${stuckMinutes} min). Will auto-cancel in 15 min if not resumed.`, {
+                  duration: 5000,
                   icon: '⚠️',
                 });
                 
@@ -219,8 +222,9 @@ export function useImportJob() {
                     if (finalTimeSinceUpdate > STALE_JOB_THRESHOLD) {
                       console.warn('Auto-cancelling stuck job:', updatedJob.id);
                       await cancelImportJob(updatedJob.id);
-                      toast.error('Stuck import job has been automatically cancelled. You can start a new import.', {
-                        duration: 8000,
+                      toast('Stuck import automatically cancelled. You can start a new import.', {
+                        duration: 5000,
+                        icon: 'ℹ️',
                       });
                     }
                   }
@@ -302,8 +306,37 @@ export function useImportJob() {
     }
   }, [isPolling, activeJob]);
 
+  const checkWorkerStatus = async (showToast = false) => {
+    try {
+      const diagnostics = await getWorkerDiagnostics();
+      setWorkerDiagnostics(diagnostics);
+      
+      // Only show toast on initial check or when explicitly requested, not on periodic checks
+      if (showToast && diagnostics.worker_status === 'likely_not_running' && diagnostics.stale_jobs_count > 0) {
+        if (!workerStatusWarningShownRef.current) {
+          workerStatusWarningShownRef.current = true;
+          // Use a less intrusive notification - shorter duration and info style
+          toast('Import worker is not running. Check the diagnostic panel below for details.', {
+            duration: 4000,
+            icon: 'ℹ️',
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error checking worker status:', error);
+    }
+  };
+
   useEffect(() => {
     checkForActiveJobs();
+    checkWorkerStatus(true); // Show toast on initial check only
+    
+    // Check worker status periodically (silently - no toasts)
+    const workerStatusInterval = setInterval(() => checkWorkerStatus(false), 60000); // Every minute
+    
+    return () => {
+      clearInterval(workerStatusInterval);
+    };
   }, []);
 
   useEffect(() => {
@@ -344,5 +377,7 @@ export function useImportJob() {
     isPolling,
     isJobStuck,
     minutesStuck,
+    workerDiagnostics,
+    checkWorkerStatus,
   };
 }

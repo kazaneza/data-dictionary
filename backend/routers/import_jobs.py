@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, UUID4
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import uuid
 from database import get_db
@@ -181,6 +181,67 @@ async def process_import_job(job_id: UUID4, config: dict, selected_tables: List[
         raise
     except Exception as e:
         db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/import-jobs/diagnostics/worker-status")
+def get_worker_diagnostics(db: Session = Depends(get_db)):
+    """Check if the import worker is likely running by checking for stale pending jobs"""
+    try:
+        # Get all pending and in_progress jobs
+        pending_jobs = db.query(ImportJob).filter(
+            ImportJob.status.in_(['pending', 'in_progress'])
+        ).order_by(ImportJob.created_at.desc()).all()
+        
+        # Check for jobs that haven't been updated in a while (likely worker not running)
+        now = datetime.utcnow()
+        stale_threshold = timedelta(hours=2)
+        stale_jobs = []
+        recent_jobs = []
+        
+        for job in pending_jobs:
+            time_since_update = now - (job.updated_at if job.updated_at else job.created_at)
+            if time_since_update > stale_threshold:
+                stale_jobs.append({
+                    "id": str(job.id),
+                    "status": job.status,
+                    "created_at": job.created_at.isoformat() if job.created_at else None,
+                    "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+                    "hours_since_update": round(time_since_update.total_seconds() / 3600, 2)
+                })
+            else:
+                recent_jobs.append({
+                    "id": str(job.id),
+                    "status": job.status,
+                    "created_at": job.created_at.isoformat() if job.created_at else None,
+                    "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+                })
+        
+        # Determine worker status
+        worker_likely_running = len(stale_jobs) == 0 and len(recent_jobs) > 0
+        worker_status = "unknown"
+        recommendations = []
+        
+        if len(stale_jobs) > 0:
+            worker_status = "likely_not_running"
+            recommendations.append("The import worker process may not be running. Check if 'python backend/import_worker.py' is running.")
+            recommendations.append(f"Found {len(stale_jobs)} job(s) that haven't been updated in over 2 hours.")
+        elif len(recent_jobs) > 0:
+            worker_status = "likely_running"
+            recommendations.append("Worker appears to be processing jobs.")
+        else:
+            worker_status = "no_jobs"
+            recommendations.append("No pending jobs found. Worker status cannot be determined.")
+        
+        return {
+            "worker_status": worker_status,
+            "stale_jobs_count": len(stale_jobs),
+            "recent_jobs_count": len(recent_jobs),
+            "stale_jobs": stale_jobs[:5],  # Limit to 5 most recent
+            "recent_jobs": recent_jobs[:5],
+            "recommendations": recommendations,
+            "check_timestamp": now.isoformat()
+        }
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # Background processing is now handled by the separate import_worker.py process

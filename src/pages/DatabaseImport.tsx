@@ -77,7 +77,7 @@ export default function DatabaseImport() {
   const [connectionController, setConnectionController] = useState<AbortController | null>(null);
 
   // Background import job management
-  const { activeJob, startImportJob, cancelImportJob, isPolling, isJobStuck, minutesStuck } = useImportJob();
+  const { activeJob, startImportJob, cancelImportJob, isPolling, isJobStuck, minutesStuck, workerDiagnostics, checkWorkerStatus } = useImportJob();
 
   useEffect(() => {
     const fetchSources = async () => {
@@ -577,6 +577,45 @@ export default function DatabaseImport() {
               </p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Worker Diagnostics */}
+      {workerDiagnostics && workerDiagnostics.worker_status === 'likely_not_running' && (
+        <div className="border rounded-lg p-4 mb-4 bg-red-50 border-red-200">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <h3 className="font-medium text-red-900 mb-2">
+                ⚠️ Import Worker Not Running
+              </h3>
+              <p className="text-sm text-red-800 mb-2">
+                The import worker process appears to be not running. Import jobs will not be processed until the worker is started.
+              </p>
+              {workerDiagnostics.recommendations.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-sm font-medium text-red-900 mb-1">Recommendations:</p>
+                  <ul className="text-sm text-red-800 list-disc list-inside space-y-1">
+                    {workerDiagnostics.recommendations.map((rec, idx) => (
+                      <li key={idx}>{rec}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {workerDiagnostics.stale_jobs_count > 0 && (
+                <p className="text-sm text-red-700 mt-2">
+                  Found {workerDiagnostics.stale_jobs_count} job(s) that haven't been updated in over 2 hours.
+                </p>
+              )}
+              <div className="mt-3">
+                <button
+                  onClick={checkWorkerStatus}
+                  className="text-sm bg-red-600 text-white hover:bg-red-700 px-3 py-1.5 rounded transition-colors"
+                >
+                  Refresh Status
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

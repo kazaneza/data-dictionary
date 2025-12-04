@@ -502,6 +502,33 @@ export const parseTablesFile = (file: File): Promise<BulkTableUpload[]> => {
   });
 };
 
+// Import Job Diagnostics
+export interface WorkerDiagnostics {
+  worker_status: 'likely_running' | 'likely_not_running' | 'unknown' | 'no_jobs';
+  stale_jobs_count: number;
+  recent_jobs_count: number;
+  stale_jobs: Array<{
+    id: string;
+    status: string;
+    created_at: string | null;
+    updated_at: string | null;
+    hours_since_update: number;
+  }>;
+  recent_jobs: Array<{
+    id: string;
+    status: string;
+    created_at: string | null;
+    updated_at: string | null;
+  }>;
+  recommendations: string[];
+  check_timestamp: string;
+}
+
+export const getWorkerDiagnostics = async (): Promise<WorkerDiagnostics> => {
+  const response = await api.get('/api/import-jobs/diagnostics/worker-status');
+  return response.data;
+};
+
 export const parseFieldsFile = (file: File): Promise<BulkFieldUpload[]> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
