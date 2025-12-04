@@ -1,12 +1,13 @@
 
 ADMIN_USERS = [
-    "gkazaneza"
-    
+    "gkazaneza",
+    "gimpano@bk"
 ]
 
 # Manager users configuration
 MANAGER_USERS = [
-    "gkazaneza"
+    "gkazaneza",
+    "gimpano@bk"
 ]
 
 # JWT settings

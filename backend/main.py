@@ -168,10 +168,22 @@ class Token(BaseModel):
 
 def get_user_role(username: str) -> str:
     """Determine user role based on username"""
-    if username in ADMIN_USERS:
+    # Normalize username (strip whitespace, convert to lowercase for comparison)
+    normalized_username = username.strip()
+    
+    # Check admin users (case-insensitive comparison)
+    admin_users_normalized = [u.strip().lower() for u in ADMIN_USERS]
+    if normalized_username.lower() in admin_users_normalized:
+        logger.info(f"User {normalized_username} assigned admin role")
         return "admin"
-    elif username in MANAGER_USERS:
+    
+    # Check manager users (case-insensitive comparison)
+    manager_users_normalized = [u.strip().lower() for u in MANAGER_USERS]
+    if normalized_username.lower() in manager_users_normalized:
+        logger.info(f"User {normalized_username} assigned manager role")
         return "manager"
+    
+    logger.info(f"User {normalized_username} assigned user role")
     return "user"
 
 # Auth endpoint
@@ -188,6 +200,7 @@ async def login(request: LoginRequest):
         
         # Get user role
         role = get_user_role(request.username)
+        logger.info(f"Login attempt for user: {request.username}, assigned role: {role}")
         
         # Create JWT token
         token_data = {
@@ -197,6 +210,7 @@ async def login(request: LoginRequest):
         }
         token = jwt.encode(token_data, JWT_SECRET, algorithm=JWT_ALGORITHM)
         
+        logger.info(f"Token created for user: {request.username} with role: {role}")
         return {"token": token, "role": role}
         
     except Exception as e:
@@ -715,6 +729,20 @@ def delete_category(category_id: UUID4, user = Depends(get_current_user), db: Se
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+@app.get("/auth/debug/config")
+def debug_config(user = Depends(get_current_user)):
+    """Debug endpoint to check loaded config (admin only)"""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    return {
+        "admin_users": ADMIN_USERS,
+        "manager_users": MANAGER_USERS,
+        "current_user": user.get("username"),
+        "current_role": user.get("role"),
+        "note": "If a user was recently added, they must log out and log back in to get the new role"
+    }
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

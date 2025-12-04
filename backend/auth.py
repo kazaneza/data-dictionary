@@ -18,10 +18,19 @@ class Token(BaseModel):
 
 def get_user_role(username: str) -> str:
     """Determine user role based on username"""
-    if username in ADMIN_USERS:
+    # Normalize username (strip whitespace, convert to lowercase for comparison)
+    normalized_username = username.strip()
+    
+    # Check admin users (case-insensitive comparison)
+    admin_users_normalized = [u.strip().lower() for u in ADMIN_USERS]
+    if normalized_username.lower() in admin_users_normalized:
         return "admin"
-    elif username in MANAGER_USERS:
+    
+    # Check manager users (case-insensitive comparison)
+    manager_users_normalized = [u.strip().lower() for u in MANAGER_USERS]
+    if normalized_username.lower() in manager_users_normalized:
         return "manager"
+    
     return "user"
 
 def create_access_token(username: str, role: str) -> str:
