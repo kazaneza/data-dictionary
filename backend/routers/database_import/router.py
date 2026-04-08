@@ -33,11 +33,27 @@ async def connect_database(config: DatabaseConfig):
     except ValueError as ve:
         logger.error(f"Invalid database type: {str(ve)}")
         raise HTTPException(status_code=400, detail=str(ve))
+    except ConnectionError as ce:
+        logger.error(f"Network connectivity check failed: {str(ce)}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Database server is not reachable",
+                "error": str(ce),
+                "type": config.type,
+                "suggestions": [
+                    f"Verify that {config.server} is the correct server address",
+                    "Ensure port 1433 (or your custom port) is open in the firewall",
+                    "Check that the SQL Server service is running on the target host",
+                    "Confirm your machine has network access to the database server",
+                    "Check if a VPN connection is required"
+                ]
+            }
+        )
     except Exception as e:
         error_msg = f"Database connection failed: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        
-        # Provide more specific error details for Oracle connections
+
         if config.type == "Oracle" and "service" in str(e).lower():
             detailed_error = {
                 "message": "Oracle connection failed",
@@ -56,7 +72,7 @@ async def connect_database(config: DatabaseConfig):
                 "error": str(e),
                 "type": config.type
             }
-        
+
         raise HTTPException(
             status_code=500,
             detail=detailed_error

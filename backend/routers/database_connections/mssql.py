@@ -2,12 +2,31 @@
 Microsoft SQL Server connection handler
 """
 
+import socket
 import pyodbc
 from typing import List, Dict, Any
 from .base import DatabaseConnection
 
 class MSSQLConnection(DatabaseConnection):
     def connect(self) -> None:
+        server = self.config['server']
+        port = int(self.config.get('port', 1433))
+
+        # Fast TCP pre-check before spending time on ODBC handshake
+        try:
+            sock = socket.create_connection((server, port), timeout=5)
+            sock.close()
+        except socket.timeout:
+            raise ConnectionError(
+                f"Cannot reach SQL Server at {server}:{port} — connection timed out. "
+                "Check that the server is running and port 1433 is open in the firewall."
+            )
+        except OSError as e:
+            raise ConnectionError(
+                f"Cannot reach SQL Server at {server}:{port} — {e}. "
+                "Check the server address and that port 1433 is accessible from this host."
+            )
+
         conn_str = self.get_connection_string()
         self.connection = pyodbc.connect(conn_str, timeout=30)
         
