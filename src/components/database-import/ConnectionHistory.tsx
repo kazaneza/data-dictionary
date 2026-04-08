@@ -108,8 +108,12 @@ export default function ConnectionHistory({
     switch (item.status) {
       case 'success':
         return `Successfully imported ${item.importedTables}/${item.totalTables} tables`;
-      case 'failed':
-        return `Failed: ${item.errorMessage || 'Unknown error'}`;
+      case 'failed': {
+        const msg = item.errorMessage && typeof item.errorMessage === 'object'
+          ? (item.errorMessage as any).message
+          : item.errorMessage;
+        return `Failed: ${msg || 'Unknown error'}`;
+      }
       case 'in_progress':
         return `In progress: ${item.importedTables}/${item.totalTables} tables imported`;
       case 'partial':
@@ -259,7 +263,11 @@ export default function ConnectionHistory({
                         <p><span className="font-medium">Failed:</span> {item.failedTables.length}</p>
                       )}
                       {item.errorMessage && (
-                        <p><span className="font-medium">Error:</span> {item.errorMessage}</p>
+                        <p><span className="font-medium">Error:</span> {
+                          typeof item.errorMessage === 'object'
+                            ? (item.errorMessage as any).message
+                            : item.errorMessage
+                        }</p>
                       )}
                     </div>
                   </div>

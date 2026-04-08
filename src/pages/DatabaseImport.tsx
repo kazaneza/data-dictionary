@@ -216,19 +216,21 @@ export default function DatabaseImport() {
       console.error('Failed to connect:', error);
       
       // Update history with failure
+      const detail = error.response?.data?.detail;
+      const errorMessage = (detail && typeof detail === 'object' ? detail.message : detail) || error.message || 'Connection failed';
+
       const failedItem = createHistoryItem(
         config,
         'failed',
         0,
         0,
         [],
-        error.response?.data?.detail || error.message || 'Connection failed',
+        errorMessage,
         Date.now() - startTime
       );
       failedItem.id = historyItem.id;
       saveConnectionHistory(failedItem);
-      
-      const errorMessage = error.response?.data?.detail || error.message || 'Connection failed';
+
       toast.error(`Failed to connect: ${errorMessage}`);
     } finally {
       setLoading(false);

@@ -3,7 +3,8 @@ ADMIN_USERS = [
     "gkazaneza",
     "gimpano",
     "bk-pay",
-    "bbyiringiro"
+    "bbyiringiro",
+    "hdenotredame"
 ]
 
 # Manager users configuration
@@ -11,7 +12,8 @@ MANAGER_USERS = [
     "gkazaneza",
     "gimpano",
     "bk-pay",
-    "bbyiringiro"
+    "bbyiringiro",
+    "hdenotredame"
 ]
 
 # JWT settings

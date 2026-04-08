@@ -121,14 +121,7 @@ function App() {
                   <Database className="h-4 w-4" />
                   <span>Data Dictionary</span>
                 </NavLink>
-                <NavLink to="/search">
-                  <Search className="h-4 w-4" />
-                  <span>Search</span>
-                </NavLink>
-                <NavLink to="/ai-field-finder">
-                  <Sparkles className="h-4 w-4" />
-                  <span>AI Field Finder</span>
-                </NavLink>
+                {/* Search and AI Field Finder hidden — not ready */}
                 <NavLink to="/manage" show={canManage}>
                   <FolderCog className="h-4 w-4" />
                   <span>Manage</span>
