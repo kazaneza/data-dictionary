@@ -185,16 +185,16 @@ export function useImportJob() {
             const lastUpdate = new Date(updatedJob.updated_at).getTime();
             const timeSinceUpdate = Date.now() - lastUpdate;
             
-            if (timeSinceUpdate > STALE_JOB_THRESHOLD && 
+            if (timeSinceUpdate > STALE_JOB_THRESHOLD &&
                 ['pending', 'in_progress'].includes(updatedJob.status)) {
               const stuckMinutes = Math.round(timeSinceUpdate / 60000);
               setIsJobStuck(true);
               setMinutesStuck(stuckMinutes);
-              console.warn('Job appears to be stuck - no updates for', stuckMinutes, 'minutes');
-              
+
               // No toast - the UI will show the warning inline
               if (!stuckJobWarningShownRef.current) {
                 stuckJobWarningShownRef.current = true;
+                console.warn('Job appears to be stuck - no updates for', stuckMinutes, 'minutes');
                 
                 // Set up auto-cancel after grace period
                 if (autoCancelTimeoutRef.current) {
